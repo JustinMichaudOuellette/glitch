@@ -2,6 +2,7 @@ package ca.justinmo.glitch
 
 import android.graphics.Bitmap
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.layout.Arrangement
@@ -16,12 +17,19 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -34,16 +42,22 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.imageResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import ca.justinmo.glitch.ui.theme.GlitchTheme
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -51,9 +65,6 @@ import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-
-/** Aspect ratio used for Stories crops (9 wide : 16 tall). */
-private const val STORIES_ASPECT = 9f / 16f
 
 /** Smallest output size offered on the long edge (px). */
 private const val MIN_RESIZE_PX = 128
@@ -122,13 +133,11 @@ internal fun ResizeScreen(
   var working by remember { mutableStateOf(false) }
   var error by remember { mutableStateOf<String?>(null) }
 
-  // Pinch-to-zoom state
+  // Pinch-to-zoom state. The gesture itself is recognised by the content (it
+  // owns the modifier that needs the layout), so this is only the zoom/pan it
+  // reports back.
   var scale by remember { mutableFloatStateOf(1f) }
   var offset by remember { mutableStateOf(Offset.Zero) }
-  val state = rememberTransformableState { zoomChange, offsetChange, _ ->
-    scale = (scale * zoomChange).coerceIn(0.5f, 5f)
-    offset += offsetChange
-  }
 
   LaunchedEffect(bytes) {
     val dims = withContext(Dispatchers.Default) { imageResolution(bytes) }
@@ -161,7 +170,65 @@ internal fun ResizeScreen(
     }
   }
 
-  Box(modifier = Modifier.fillMaxSize()) {
+  // Decoding, the zoom gesture and the encode stay here; the whole visible
+  // layout is drawn by the stateless ResizeScreenContent below, which is what
+  // the @Preview functions render.
+  ResizeScreenContent(
+    preview = displayedPreview?.asImageBitmap(),
+    resolution = resolution,
+    targetSize = targetSize,
+    cropForStories = cropForStories,
+    working = working,
+    error = error,
+    zoomScale = scale,
+    zoomOffset = offset,
+    onTransform = { zoomChange, panChange ->
+      scale = (scale * zoomChange).coerceIn(0.5f, 5f)
+      offset += panChange
+    },
+    onTargetSizeChange = { targetSize = it },
+    onCropChange = { cropForStories = it },
+    onBack = onBack,
+    onSkip = { onContinue(bytes, scale, offset) },
+    onResize = { resize(targetSize, if (cropForStories) STORIES_ASPECT else null) },
+  )
+}
+
+/**
+ * Stateless body of [ResizeScreen]: the zoomable preview of the decoded JPEG
+ * with the size / crop controls beneath it. Decoding, cropping and encoding
+ * live in [ResizeScreen], so this part can be rendered - and previewed - on
+ * its own.
+ *
+ * The pinch-to-zoom gesture is recognised here, because the transformable
+ * modifier has to sit on the preview this function lays out; the zoom/pan it
+ * reports goes back to the caller through [onTransform], while the values it
+ * draws come from [zoomScale] / [zoomOffset].
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun ResizeScreenContent(
+  preview: ImageBitmap?,
+  resolution: Pair<Int, Int>?,
+  targetSize: Int,
+  cropForStories: Boolean,
+  working: Boolean,
+  error: String?,
+  zoomScale: Float,
+  zoomOffset: Offset,
+  onTransform: (zoomChange: Float, panChange: Offset) -> Unit,
+  onTargetSizeChange: (Int) -> Unit,
+  onCropChange: (Boolean) -> Unit,
+  onBack: () -> Unit,
+  onSkip: () -> Unit,
+  onResize: () -> Unit,
+  modifier: Modifier = Modifier,
+) {
+  val state = rememberTransformableState { zoomChange, offsetChange, _ ->
+    onTransform(zoomChange, offsetChange)
+  }
+
+  Box(modifier = modifier.fillMaxSize()) {
     // Current frame (Layer 0: Background zoomable preview). The status bar
     // inset keeps the top edge of the auto-cropped preview flush against the
     // status bar instead of running underneath it.
@@ -171,19 +238,18 @@ internal fun ResizeScreen(
         .statusBarsPadding(),
       contentAlignment = Alignment.TopCenter,
     ) {
-      val bmp = displayedPreview
-      if (bmp != null) {
+      if (preview != null) {
         Image(
-          bitmap = bmp.asImageBitmap(),
+          bitmap = preview,
           contentDescription = stringResource(R.string.resize_source_desc),
           modifier = Modifier
             .fillMaxSize()
             .transformable(state = state)
             .graphicsLayer(
-              scaleX = scale,
-              scaleY = scale,
-              translationX = offset.x,
-              translationY = offset.y,
+              scaleX = zoomScale,
+              scaleY = zoomScale,
+              translationX = zoomOffset.x,
+              translationY = zoomOffset.y,
             ),
           contentScale = ContentScale.Fit,
           alignment = Alignment.TopCenter,
@@ -199,7 +265,7 @@ internal fun ResizeScreen(
     // Controls (Layer 1: Foreground UI)
     Column(modifier = Modifier.fillMaxSize()) {
       Spacer(modifier = Modifier.statusBarsPadding())
-      TitleBar(title = stringResource(R.string.resize_title), isAboveMedia = true, onBack = onBack)
+      TitleBar(title = stringResource(R.string.resize_title), onBack = onBack)
 
       Spacer(modifier = Modifier.weight(1f))
 
@@ -227,16 +293,40 @@ internal fun ResizeScreen(
       Text(
         text = stringResource(R.string.resize_preset_label, targetSize),
         modifier = Modifier.fillMaxWidth(),
-        style = MaterialTheme.typography.titleMedium,
+        style = MaterialTheme.typography.titleMedium.copy(shadow = createShadow()),
         textAlign = TextAlign.Center,
       )
       Slider(
         value = targetSize.toFloat(),
         onValueChange = { v ->
-          targetSize = allowedSizes.minByOrNull { abs(it - v.roundToInt()) } ?: targetSize
+          onTargetSizeChange(allowedSizes.minByOrNull { abs(it - v.roundToInt()) } ?: targetSize)
         },
         valueRange = MIN_RESIZE_PX.toFloat()..maxTargetPx.toFloat(),
         modifier = Modifier.fillMaxWidth(),
+        thumb = {
+          // Apply a shadow specifically to the custom thumb
+          Box(
+            modifier = Modifier
+              .shadow(elevation = 8.dp, shape = RoundedCornerShape(size = 4.dp))
+              .size(width = 8.dp, height = 48.dp)
+              .clip(RoundedCornerShape(size = 4.dp))
+              .background(MaterialTheme.colorScheme.primary)
+          )
+        },
+        track = { sliderState ->
+          Box(
+            modifier = Modifier
+              .fillMaxWidth()
+              .height(16.dp) // Adjust height to match your design
+              .shadow(elevation = 4.dp, shape = RoundedCornerShape(4.dp))
+              .clip(RoundedCornerShape(4.dp))
+          ) {
+            SliderDefaults.Track(
+              sliderState = sliderState,
+              colors = SliderDefaults.colors()
+            )
+          }
+        }
       )
 
       // Crop toggle only makes sense when the photo isn't already 9:16.
@@ -249,12 +339,20 @@ internal fun ResizeScreen(
           Column(modifier = Modifier.weight(1f)) {
             Text(
               text = stringResource(R.string.resize_crop_option),
-              style = MaterialTheme.typography.bodyLarge,
+              style = MaterialTheme.typography.bodyLarge.copy(shadow = createShadow()),
             )
           }
           Switch(
             checked = cropForStories,
-            onCheckedChange = { cropForStories = it },
+            onCheckedChange = onCropChange,
+            thumbContent = {
+              Box(
+                modifier = Modifier
+                  .size(SwitchDefaults.IconSize)
+                  .shadow(elevation = 4.dp, shape = CircleShape)
+                  .background(MaterialTheme.colorScheme.surface, CircleShape)
+              )
+            }
           )
         }
       }
@@ -266,7 +364,7 @@ internal fun ResizeScreen(
         verticalAlignment = Alignment.CenterVertically,
       ) {
         Button(
-          onClick = { onContinue(bytes, scale, offset) },
+          onClick = onSkip,
           modifier = Modifier.height(56.dp),
           enabled = !working,
           colors = ButtonDefaults.buttonColors(
@@ -295,9 +393,7 @@ internal fun ResizeScreen(
         }
 
         Button(
-          onClick = {
-            resize(targetSize, if (cropForStories) STORIES_ASPECT else null)
-          },
+          onClick = onResize,
           modifier = Modifier.weight(1f).height(56.dp),
           enabled = !working,
           elevation = ButtonDefaults.buttonElevation(defaultElevation = 4.dp)
@@ -318,4 +414,52 @@ internal fun ResizeScreen(
     }
   }
 }
+}
+
+// --- Previews ---------------------------------------------------------------
+
+/**
+ * Shared shell for the previews: app theme, dark surface, and the real
+ * [ResizeScreenContent] fed with a sample frame and no-op callbacks.
+ *
+ * [R.drawable.example] is the bundled 1080x1920 9:16 example photo - the same
+ * kind of frame the screen hands over once it has decoded and cropped the
+ * picked JPEG, so the preview shows the geometry the app really draws.
+ */
+@Composable
+private fun ResizeScreenPreviewShell(working: Boolean = false) {
+  GlitchTheme {
+    Surface(modifier = Modifier.fillMaxSize()) {
+      ResizeScreenContent(
+        preview = ImageBitmap.imageResource(R.drawable.example),
+        resolution = 4032 to 3024,
+        targetSize = 1080,
+        cropForStories = true,
+        working = working,
+        error = null,
+        zoomScale = 1f,
+        zoomOffset = Offset.Zero,
+        onTransform = { _, _ -> },
+        onTargetSizeChange = {},
+        onCropChange = {},
+        onBack = {},
+        onSkip = {},
+        onResize = {},
+      )
+    }
+  }
+}
+
+/** Idle state: sample frame, size seek bar, crop toggle and both buttons. */
+@Preview(name = "Resize", device = "spec:width=411dp,height=891dp", showBackground = true)
+@Composable
+private fun ResizeScreenPreview() {
+  ResizeScreenPreviewShell(working = false)
+}
+
+/** Working state: the resize button reads "Resizing…" and both buttons disable. */
+@Preview(name = "Resize · working", device = "spec:width=411dp,height=891dp", showBackground = true)
+@Composable
+private fun ResizeScreenWorkingPreview() {
+  ResizeScreenPreviewShell(working = true)
 }

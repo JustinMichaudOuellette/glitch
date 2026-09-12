@@ -19,6 +19,9 @@ internal const val RESIZE_MAX_DIM = 1400
 /** JPEG quality used when re-encoding (resize / PNG-to-JPEG conversion). */
 internal const val JPEG_QUALITY = 92
 
+/** Aspect ratio used for Stories crops (9 wide : 16 tall). */
+internal const val STORIES_ASPECT = 9f / 16f
+
 /** If [bytes] is already a JPEG (SOI marker) return it unchanged, else decode and re-encode. */
 internal fun toJpegBytes(bytes: ByteArray): ByteArray? {
   if (bytes.size >= 2 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xD8.toByte()) return bytes

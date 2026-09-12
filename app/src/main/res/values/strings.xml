@@ -84,9 +84,19 @@
 
     <!-- Flip readout -->
     <string name="edit_flip_readout">byte %1$s · bit %2$d · damage from %3$d%% down</string>
+    <string name="edit_flip_readout_band">byte %1$s · bit %2$d · damage rows %3$d%%–%4$d%%</string>
     <string name="edit_flip_readout_plain">byte %1$s · bit %2$d</string>
     <string name="edit_flip_retried"> (retried %1$d)</string>
     <string name="edit_fatal_note">%1$d bytes here are skipped: every bit flip in them makes the file undecodable.</string>
+
+    <!-- Restart-marker injection: bounds where damage stops -->
+    <string name="edit_window_section">Damage window %1$d%% tall</string>
+    <string name="edit_window_button">Bound damage (add restart markers)</string>
+    <string name="edit_window_working">Rebuilding scan…</string>
+    <string name="edit_window_active">Damage now stops at window edges: each glitch is confined to a %1$d%% tall band.</string>
+    <string name="edit_window_unsupported">Can\'t bound damage here: %1$s</string>
+    <string name="edit_window_failed">Restart injection failed: %1$s</string>
+    <string name="edit_window_done">Added %1$d restart markers — damage is now confined to %2$d%% tall bands.</string>
 
     <!-- Export -->
     <string name="export_saved_pictures">Saved to Pictures/Glitch/%1$s</string>

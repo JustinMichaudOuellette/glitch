@@ -162,14 +162,15 @@ class ScanInfo(
   val markerOffset: Int,
   val start: Int,
   val endExclusive: Int,
-  val componentIds: List<Int>,
+  val components: List<ScanComponent>,
   val ss: Int,
   val se: Int,
   val ah: Int,
   val al: Int,
 ) {
   val byteCount: Int get() = endExclusive - start
-  val componentCount: Int get() = componentIds.size
+  val componentIds: List<Int> get() = components.map { it.id }
+  val componentCount: Int get() = components.size
 
   /** A DC-only scan (spectral selection 0..0). */
   val isDcOnly: Boolean get() = ss == 0 && se == 0
@@ -182,6 +183,31 @@ class ScanInfo(
 
   override fun toString(): String =
     "#$index bytes[$start,$endExclusive) comps=$componentIds Ss=$ss Se=$se Ah=$ah Al=$al"
+}
+
+/**
+ * One component as listed in an SOS header, with the Huffman tables it uses.
+ * Needed by [JpegRestartInjector] to re-encode a scan.
+ */
+class ScanComponent(val id: Int, val dcTable: Int, val acTable: Int) {
+  override fun toString(): String = "id=$id dc=$dcTable ac=$acTable"
+}
+
+/**
+ * A Huffman table exactly as declared in a DHT segment: the 16 code-length
+ * counts and the symbol list that follows. [JpegRestartInjector] turns this into
+ * the canonical decode/encode tables it needs.
+ */
+class HuffmanTableSpec(
+  /** 0 = DC table, 1 = AC table (the Tc field of the DHT spec byte). */
+  val tableClass: Int,
+  /** Table id 0-3 (the Th field). */
+  val tableId: Int,
+  val counts: IntArray,
+  val symbols: IntArray,
+) {
+  override fun toString(): String =
+    "Tc=$tableClass Th=$tableId symbols=${symbols.size}"
 }
 
 /**
@@ -198,6 +224,23 @@ class ScanInfo(
  * scan a unit is one 8x8 block of that component's plane, which covers
  * `8 * maxV / v` image rows - this is why progressive AC/chroma scans can still
  * be aimed even though they do not cover the image in MCU order.
+ *
+ * ### Measured accuracy, and why it is not exact
+ *
+ * Verified end to end by flipping real bytes inside these bands and measuring
+ * the first damaged row with libjpeg (build/verify/check_area_end2end.py):
+ *
+ *     b.jpg scan 0 (interleaved MCU)   aim error mean 0.010, max 0.016
+ *     a.jpg scan 0 (interleaved, DC)   aim error mean 0.020, max 0.028
+ *     a.jpg scan 2 (single component)  aim error mean 0.040, max 0.055
+ *     a.jpg scan 4 (single component)  aim error mean 0.080, max 0.101
+ *
+ * The residual is not a rounding artefact: entropy codes are variable-length, so
+ * bytes per block depend on image content. A smooth region spends fewer bits per
+ * block than a detailed one, so a given byte fraction corresponds to a *larger*
+ * block fraction in the smooth part of this photo - which is why damage lands
+ * slightly later than aimed, and why the error grows on narrow single-component
+ * scans. Removing it needs real block boundaries from a Huffman decode.
  */
 class ScanGeometry(
   val scan: ScanInfo,
@@ -258,6 +301,29 @@ class ScanGeometry(
   }
 
   /**
+   * Image-row fraction where damage from a flip at [offset] *stops*, given
+   * restart markers every [intervalUnits] units.
+   *
+   * Without restart markers a corrupt byte desyncs the Huffman decoder and
+   * everything to the end of the scan is wrecked, so damage always reaches the
+   * bottom of the image. With a restart every [intervalUnits] units the decoder
+   * resynchronises at the next marker, so the damage is confined to the
+   * remainder of that restart interval. Measured on `b.jpg` with an 8-interval
+   * transcode, every corrupt byte stayed inside its predicted band
+   * (build/verify/inject_restarts.py).
+   *
+   * Returns 1.0 when [intervalUnits] is not positive (unbounded).
+   */
+  fun damageEndFraction(offset: Int, intervalUnits: Int): Float {
+    if (intervalUnits <= 0) return 1f
+    val perRow = unitsPerRow.coerceAtLeast(1)
+    val unit = unitForOffset(offset)
+    val intervalEndUnit = ((unit / intervalUnits) + 1) * intervalUnits
+    if (intervalEndUnit >= totalUnits) return 1f
+    return unitRowFraction(intervalEndUnit / perRow)
+  }
+
+  /**
    * The byte span covering the unit row that contains image-row fraction
    * [rowFraction]. A flip anywhere in this span starts its damage at
    * approximately [rowFraction], giving the caller a whole MCU row of candidate
@@ -291,6 +357,10 @@ class JpegStructure(
   val fatal: List<ByteSpan>,
   /** APPn/COM segments - metadata only, never a glitch target. */
   val metadata: List<ByteSpan>,
+  /** Huffman tables as declared, used by [JpegRestartInjector]. */
+  val huffmanTables: List<HuffmanTableSpec> = emptyList(),
+  /** DRI restart interval in MCUs, 0 when the file declares none. */
+  val restartInterval: Int = 0,
 ) {
   fun spansOf(region: GlitchRegion): List<ByteSpan> = when (region) {
     GlitchRegion.DQT -> dqt
@@ -328,6 +398,7 @@ object JpegParser {
   private const val SOS = 0xDA // start of scan (entropy-coded data follows)
   private const val DQT = 0xDB // define quantization table(s)
   private const val DHT = 0xC4 // define Huffman table(s)
+  private const val DRI = 0xDD // define restart interval
   private const val SOF0 = 0xC0
   private const val SOF1 = 0xC1
   private const val SOF2 = 0xC2
@@ -347,7 +418,9 @@ object JpegParser {
     val scans = mutableListOf<ScanInfo>()
     val fatal = mutableListOf<ByteSpan>()
     val metadata = mutableListOf<ByteSpan>()
+    val huffmanTables = mutableListOf<HuffmanTableSpec>()
     var frame: JpegFrame? = null
+    var restartInterval = 0
     val n = data.size
     var pos = 2 // just past SOI (FF D8)
 
@@ -380,7 +453,7 @@ object JpegParser {
               markerOffset = pos,
               start = segEnd,
               endExclusive = terminator,
-              componentIds = header?.first ?: emptyList(),
+              components = header?.first ?: emptyList(),
               ss = header?.second?.get(0) ?: 0,
               se = header?.second?.get(1) ?: 63,
               ah = header?.second?.get(2) ?: 0,
@@ -396,7 +469,13 @@ object JpegParser {
         }
         DHT -> {
           dht.add(ByteSpan(payloadStart, segEnd)) // payload only
-          collectHuffmanTables(data, payloadStart, segEnd, fatal)
+          collectHuffmanTables(data, payloadStart, segEnd, fatal, huffmanTables)
+        }
+        DRI -> {
+          if (payloadStart + 1 < segEnd) {
+            restartInterval = ((data[payloadStart].toInt() and 0xFF) shl 8) or
+              (data[payloadStart + 1].toInt() and 0xFF)
+          }
         }
         SOF0, SOF1, SOF2 -> {
           frame = readFrameHeader(data, payloadStart, segEnd, code == SOF2)
@@ -423,6 +502,8 @@ object JpegParser {
       frame = builtFrame,
       fatal = sortedFatal,
       metadata = metadata,
+      huffmanTables = huffmanTables,
+      restartInterval = restartInterval,
     )
   }
 
@@ -430,31 +511,34 @@ object JpegParser {
   private fun isMetadata(code: Int): Boolean = code in 0xE0..0xEF || code == 0xFE
 
   /**
-   * Read the SOS header: component ids and the spectral selection /
-   * successive-approximation fields. Returns (componentIds, [Ss, Se, Ah, Al])
-   * or null when the segment is too short to hold a valid header.
+   * Read the SOS header: the component list with each component's DC/AC table
+   * selectors, plus the spectral selection / successive-approximation fields.
+   * Returns (components, [Ss, Se, Ah, Al]) or null when the segment is too short
+   * to hold a valid header.
    */
   private fun readScanHeader(
     data: ByteArray,
     payloadStart: Int,
     payloadEnd: Int,
-  ): Pair<List<Int>, IntArray>? {
+  ): Pair<List<ScanComponent>, IntArray>? {
     if (payloadStart >= data.size) return null
     val ns = data[payloadStart].toInt() and 0xFF
     if (ns <= 0) return null
     // 1 (Ns) + 2*Ns (component selectors) + 3 (Ss, Se, AhAl)
     val tailStart = payloadStart + 1 + 2 * ns
     if (tailStart + 2 >= payloadEnd || tailStart + 2 >= data.size) return null
-    val ids = ArrayList<Int>(ns)
+    val components = ArrayList<ScanComponent>(ns)
     for (i in 0 until ns) {
       val at = payloadStart + 1 + 2 * i
-      if (at >= payloadEnd) return null
-      ids.add(data[at].toInt() and 0xFF)
+      if (at + 1 >= payloadEnd) return null
+      val id = data[at].toInt() and 0xFF
+      val selectors = data[at + 1].toInt() and 0xFF
+      components.add(ScanComponent(id, (selectors shr 4) and 0x0F, selectors and 0x0F))
     }
     val ss = data[tailStart].toInt() and 0xFF
     val se = data[tailStart + 1].toInt() and 0xFF
     val ahAl = data[tailStart + 2].toInt() and 0xFF
-    return ids to intArrayOf(ss, se, ahAl shr 4, ahAl and 0x0F)
+    return components to intArrayOf(ss, se, ahAl shr 4, ahAl and 0x0F)
   }
 
   /** Parse the SOF payload into a [JpegFrame]. */
@@ -517,24 +601,38 @@ object JpegParser {
   }
 
   /**
-   * Walk a DHT payload, recording each table's spec byte plus its 16
-   * code-length counts as fatal, and its symbol bytes as safe.
-   *
-   * The counts are fatal because a corrupted BITS[] array makes the code
-   * lengths inconsistent with the symbols they prefix; measured 16/16
-   * undecodable bits for all four tables of `b.jpg`.
+   * Walk a DHT payload. Each table's spec byte plus its 16 code-length counts go
+   * into [fatal]: a corrupted BITS[] array makes the code lengths inconsistent
+   * with the symbols they prefix (measured 16/16 undecodable bits for all four
+   * tables of `b.jpg`). The symbol bytes are safe to flip, and the full table is
+   * recorded in [tables] for [JpegRestartInjector].
    */
   private fun collectHuffmanTables(
     data: ByteArray,
     payloadStart: Int,
     payloadEnd: Int,
     fatal: MutableList<ByteSpan>,
+    tables: MutableList<HuffmanTableSpec>,
   ) {
     var p = payloadStart
     while (p + 17 <= payloadEnd) {
+      val spec = data[p].toInt() and 0xFF
+      val counts = IntArray(16)
       var symbols = 0
-      for (i in 1..16) symbols += data[p + i].toInt() and 0xFF
+      for (i in 1..16) {
+        counts[i - 1] = data[p + i].toInt() and 0xFF
+        symbols += counts[i - 1]
+      }
       if (p + 17 + symbols > payloadEnd) return // truncated table
+      val values = IntArray(symbols) { data[p + 17 + it].toInt() and 0xFF }
+      tables.add(
+        HuffmanTableSpec(
+          tableClass = (spec shr 4) and 0x0F,
+          tableId = spec and 0x0F,
+          counts = counts,
+          symbols = values,
+        ),
+      )
       fatal.add(ByteSpan(p, p + 17))
       p += 17 + symbols
     }

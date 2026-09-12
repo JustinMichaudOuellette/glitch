@@ -2,6 +2,7 @@ package ca.justinmo.glitch.jpeg
 
 import java.io.File
 import kotlin.random.Random
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -356,5 +357,178 @@ class JpegParserTest {
     assertEquals("interleaved MCU grid", 217 * 289, geom!!.totalUnits)
     assertEquals(217, geom.unitsPerRow)
     assertEquals(frame.mcuHeight, geom.rowsPerUnitRow)
+  }
+
+  // --- Restart-marker injection --------------------------------------------
+  //
+  // Restart markers give the decoder a place to resynchronise, which bounds
+  // glitch damage to one window instead of letting it run to the bottom of the
+  // image. Injecting them requires a Huffman transcode, so the strongest
+  // available check is that the transcode is exact.
+
+  @Test
+  fun restartInjectionWithWholeFrameIntervalReproducesTheScanExactly() {
+    val file = File("../b.jpg")
+    assumeTrue("fixture missing: ${file.absolutePath}", file.exists())
+    val raw = file.readBytes()
+    val s = JpegParser.parse(raw)
+    val frame = s.frame!!
+    val totalMcus = frame.mcusPerRow * frame.mcuRows
+
+    // An interval covering the whole frame emits no markers, so the transcode is
+    // a pure round trip: identical entropy bytes, only the DRI marker added.
+    val result = JpegRestartInjector.inject(raw, s, totalMcus)
+    assertNotNull("injection must succeed for a baseline file", result)
+    assertEquals("no markers when one interval covers the frame", 0, result!!.restartCount)
+    assertEquals("only the 6-byte DRI marker is added", raw.size + 6, result.bytes.size)
+
+    val reparsed = JpegParser.parse(result.bytes)
+    assertEquals("DRI must be re-parsed", totalMcus, reparsed.restartInterval)
+    assertEquals(1, reparsed.scans.size)
+
+    val before = raw.copyOfRange(s.scans[0].start, s.scans[0].endExclusive)
+    val after = result.bytes.copyOfRange(
+      reparsed.scans[0].start,
+      reparsed.scans[0].endExclusive,
+    )
+    assertArrayEquals("entropy stream must be reproduced byte-for-byte", before, after)
+  }
+
+  @Test
+  fun restartInjectionEmitsMarkersAndIsStillLosslessInStructure() {
+    val file = File("../b.jpg")
+    assumeTrue("fixture missing: ${file.absolutePath}", file.exists())
+    val raw = file.readBytes()
+    val s = JpegParser.parse(raw)
+    val frame = s.frame!!
+    val interval = JpegRestartInjector.intervalForWindowFraction(frame, 0.125f)
+    assertEquals("0.125 of 289 MCU rows", 36 * 217, interval)
+
+    val result = JpegRestartInjector.inject(raw, s, interval)
+    assertNotNull(result)
+    val totalMcus = frame.mcusPerRow * frame.mcuRows
+    // A marker goes before every MCU that is a multiple of the interval, so
+    // 62713 MCUs with an interval of 7812 leaves 8 markers.
+    assertEquals("marker count", (totalMcus - 1) / interval, result!!.restartCount)
+    assertEquals(36f / frame.mcuRows, result.windowFraction, 1e-6f)
+
+    val reparsed = JpegParser.parse(result.bytes)
+    assertEquals(interval, reparsed.restartInterval)
+    assertEquals("restart spans must be re-parsed", result.restartCount, reparsed.rst.size)
+    // Markers are 2 bytes each plus the 6-byte DRI, plus bit padding per window.
+    assertTrue(
+      "size must grow by at least the marker bytes",
+      result.bytes.size >= raw.size + 6 + 2 * result.restartCount,
+    )
+    // The trailer after EOI must survive: b.jpg carries a second embedded image.
+    val rawTrailer = raw.copyOfRange(s.scans[0].endExclusive, raw.size)
+    val newTrailer = result.bytes.copyOfRange(
+      reparsed.scans[0].endExclusive,
+      result.bytes.size,
+    )
+    assertArrayEquals("post-EOI trailer must be preserved", rawTrailer, newTrailer)
+  }
+
+  @Test
+  fun restartInjectionRefusesProgressiveWithAReason() {
+    val file = File("../a.jpg")
+    assumeTrue("fixture missing: ${file.absolutePath}", file.exists())
+    val raw = file.readBytes()
+    val s = JpegParser.parse(raw)
+    val reason = JpegRestartInjector.unsupportedReason(s)
+    assertNotNull("progressive files must be refused", reason)
+    assertTrue("reason must mention progressive: $reason", reason!!.contains("progressive"))
+    assertNull("inject must refuse rather than corrupt", JpegRestartInjector.inject(raw, s, 100))
+  }
+
+  @Test
+  fun damageEndFractionStopsAtWindowBoundaries() {
+    val file = File("../b.jpg")
+    assumeTrue("fixture missing: ${file.absolutePath}", file.exists())
+    val s = JpegParser.parse(file.readBytes())
+    val geom = s.geometryFor(0)!!
+    val interval = JpegRestartInjector.intervalForWindowFraction(s.frame!!, 0.125f)
+    val windowHeight = geom.rowsPerUnitRow.toFloat() * (interval / geom.unitsPerRow) /
+      geom.imageHeight
+
+    var previousEnd = -1f
+    var windows = 0
+    for (mcu in interval until geom.totalUnits step interval) {
+      val offset = geom.offsetForUnit(mcu)
+      val start = geom.damageStartFraction(offset)
+      val end = geom.damageEndFraction(offset, interval)
+      assertTrue("window at MCU $mcu must be non-empty ($start..$end)", end > start)
+      assertTrue(
+        "damage must stop within one window of where it starts",
+        end - start <= windowHeight + 1e-6f,
+      )
+      assertTrue("windows must not overlap ($start < $previousEnd)", start >= previousEnd - 1e-6f)
+      previousEnd = end
+      windows++
+    }
+    assertEquals("every interval start yields a window", 8, windows)
+
+    // An interval that covers the whole frame is unbounded by definition.
+    val lastOffset = geom.offsetForUnit(geom.totalUnits - 1)
+    assertEquals(
+      "the final window reaches the bottom of the image",
+      1f,
+      geom.damageEndFraction(lastOffset, interval),
+      1e-6f,
+    )
+    assertEquals(
+      "a zero interval means unbounded",
+      1f,
+      geom.damageEndFraction(geom.offsetForUnit(0), 0),
+      1e-6f,
+    )
+  }
+
+  @Test
+  fun scanByteCountExcludesRestartMarkerBytes() {
+    val file = File("../b.jpg")
+    assumeTrue("fixture missing: ${file.absolutePath}", file.exists())
+    val raw = file.readBytes()
+    val s = JpegParser.parse(raw)
+    val injected = JpegRestartInjector.inject(
+      raw,
+      s,
+      JpegRestartInjector.intervalForWindowFraction(s.frame!!, 0.125f),
+    )
+    assertNotNull(injected)
+    val reparsed = JpegParser.parse(injected!!.bytes)
+    assertEquals(8, reparsed.rst.size)
+    assertEquals("RST markers occupy 2 bytes each", 16, reparsed.byteCount(GlitchRegion.RST))
+    // Scan spans are split around the markers, so the scan region is the scan
+    // byte count minus the marker bytes - the scan never overlaps an RST.
+    val scanTotal = reparsed.byteCount(GlitchRegion.SCAN)
+    assertEquals(
+      "scan + rst == the whole entropy range",
+      reparsed.scans[0].byteCount,
+      scanTotal + reparsed.byteCount(GlitchRegion.RST),
+    )
+    for (span in reparsed.scan) {
+      for (marker in reparsed.rst) {
+        assertTrue(
+          "scan span ${span} must not overlap RST $marker",
+          span.endExclusive <= marker.start || span.start >= marker.endExclusive,
+        )
+      }
+    }
+  }
+
+  @Test
+  fun intervalForWindowFractionAlwaysCoversWholeMcuRows() {
+    val file = File("../b.jpg")
+    assumeTrue("fixture missing: ${file.absolutePath}", file.exists())
+    val frame = JpegParser.parse(file.readBytes()).frame!!
+    // Any requested window is rounded up to at least one MCU row.
+    assertEquals(frame.mcusPerRow, JpegRestartInjector.intervalForWindowFraction(frame, 0.0001f))
+    assertEquals(frame.mcusPerRow * frame.mcuRows, JpegRestartInjector.intervalForWindowFraction(frame, 1f))
+    for (f in listOf(0.05f, 0.1f, 0.25f, 0.5f, 0.9f)) {
+      val interval = JpegRestartInjector.intervalForWindowFraction(frame, f)
+      assertEquals("interval must be a whole number of MCU rows at $f", 0, interval % frame.mcusPerRow)
+      assertTrue("interval must be positive at $f", interval > 0)
+    }
   }
 }
