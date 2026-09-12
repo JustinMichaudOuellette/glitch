@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!--
+      The resting color of the number picker's numbers and arrows. This is
+      ui/theme/Color.kt's LightGrey, the same color a quantizer row uses for a
+      value that has not been touched, so the wheel sits at the weight of the rest
+      of the panel.
+    -->
+    <color name="number_picker_text">#CCCCCC</color>
+</resources>

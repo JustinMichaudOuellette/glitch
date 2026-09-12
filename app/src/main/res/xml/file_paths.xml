@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- FileProvider paths for camera captures and shared glitch files. -->
+<paths>
+    <cache-path name="captures" path="captures/" />
+    <cache-path name="shared" path="shared/" />
+    <external-path name="pictures" path="Pictures/Glitch/" />
+</paths>

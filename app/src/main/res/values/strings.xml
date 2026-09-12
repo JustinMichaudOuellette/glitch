@@ -1,0 +1,339 @@
+<resources>
+    <string name="app_name">JPEGlitch</string>
+
+    <!-- Shared / common -->
+    <string name="common_back">Back</string>
+    <string name="common_close">Close</string>
+    <string name="common_info">Info</string>
+
+    <!-- Screen 1: source picker -->
+    <string name="action_camera">Camera</string>
+    <string name="action_gallery">Gallery</string>
+    <string name="source_loading_image">Loading image…</string>
+    <string name="source_error_decode">Couldn\'t decode that image.</string>
+    <string name="source_error_read_capture">Couldn\'t read the captured photo.</string>
+    <string name="source_error_no_camera_app">No camera app available.</string>
+    <string name="source_error_read_selection">Couldn\'t read the selected image.</string>
+    <string name="image_source_camera">Camera</string>
+    <string name="image_source_gallery">Gallery</string>
+    <string name="image_source_shared">Shared image</string>
+
+    <!-- The scan data screen -->
+    <string name="scan_title">Scan data</string>
+    <string name="scan_preview_desc">The picture in the scan step</string>
+    <string name="scan_unavailable">This file has no scan data this screen can edit. It may be progressive, or already damaged.</string>
+    <string name="scan_next">Next</string>
+    <string name="scan_flip_readout">flipped bit %2$d at %1$s, section %3$d</string>
+    <string name="scan_flip_readout_plain">flipped bit %2$d at %1$s</string>
+    <string name="scan_no_effect">No bit in this stretch of the row changed the picture or stayed readable. Flip moves on from them next press.</string>
+    <!-- What the triangle after the title does, in each direction. Neither is drawn: both
+         are the label the title is announced with, since "Scan data" does not say that
+         tapping it opens anything and "Huffman tables" does not say where it goes back to. -->
+    <string name="scan_huffman">Open the Huffman tables</string>
+
+    <!-- The scan data screen's explanation -->
+    <string name="scan_info_title">How the scan works</string>
+    <string name="scan_info_intro_title">The picture itself</string>
+    <string name="scan_info_intro_body">The scan data is the picture itself - the coded bits of every block - rather than a table describing it. The quantization and Huffman screens say how to read those bits; this screen changes them. A flip here is a JPEG glitch at its rawest: a bit that was 0 becomes 1, and the decoder reads on from there without ever being told anything went wrong.</string>
+    <string name="scan_info_flip_title">What a press of flip does</string>
+    <string name="scan_info_flip_body">A flip walks the row rather than sampling it: the first press tries the row\'s first byte, the next press the second, and when the row runs out the bit position moves along a place and it starts again. Bits that leave the picture identical or stop the file decoding are skipped, so a press lands on the next bit that actually changes something. The same row and the same presses still write the same file, and each press can be undone on its own.</string>
+    <string name="scan_info_row_title">The row it is aimed at</string>
+    <string name="scan_info_row_body">The first slider picks the row a press lands in: one row of 8x8 blocks, not one row of pixels. The slider steps from section to section rather than sliding through fractions, and the readout under it counts those sections.</string>
+    <string name="scan_info_row_caption">The chosen section is where the next press lands. It is not a limit on where the damage spreads.</string>
+    <string name="scan_info_window_title">How far one bad bit travels</string>
+    <string name="scan_info_window_body">A decoder has no way to know a bit is wrong, so inside a run of data it keeps decoding and one wrong bit can carry the error to the end of the scan. Restart markers are what stop it: the encoder is allowed to start again at each one, so damage cannot cross one. Most photos straight from a camera carry none at all.</string>
+    <string name="scan_info_window_caption">One wrong bit, and the damage running until the next marker stops it.</string>
+    <string name="scan_info_window_button">The second slider sets how tall a band the damage should be confined to, as a fraction of the picture, and the button rebuilds the scan with markers at that spacing. Once a file has them, the line above says how many it carries and the slider is replaced by that.</string>
+    <string name="scan_info_actions_title">Undo, reset, flip</string>
+    <string name="scan_info_actions_body">Flip writes the next bit along that changes the picture, Undo takes the last press back a press at a time - an injection comes back in one press too, however many bytes it moved - and Reset goes all the way back to the file this screen was handed. All three grey out when there is nothing for them to do, and stay where they are rather than coming and going.</string>
+    <string name="scan_info_actions_next">Next hands on what this screen has made of the file, and goes on to the final preview, where it is saved, shared or written as another format. Leaving the bytes alone is reset followed by next: the flips are the whole of what this screen does to them.</string>
+    <string name="scan_info_tables_title">The Huffman tables</string>
+    <string name="scan_info_tables_body">The triangle after the title opens the Huffman tables, which are the other half of what a code means: the tables say which symbol each code stands for, and this screen changes the codes themselves. They are a screen of their own because one rewritten symbol can change whole runs of blocks at once, and they open on the file as this screen has made it, flips and all.</string>
+    <string name="scan_info_limits_title">What it will not touch</string>
+    <string name="scan_info_limits_body">Restart markers are never flipped: a byte changed inside one is a different marker, which is a different file rather than a glitched one. Bytes whose every flip would make the file undecodable are skipped, and the panel says how many; on top of that a press skips individual bits whose result is pixel-identical or does not open. A progressive JPEG, or a scan that is already damaged, has nothing this screen can safely edit, and it says so instead of offering a flip.</string>
+
+    <!-- Screen 1 info: what the app is, how the five steps divide the work, and the one
+         screen that hangs off them -->
+    <string name="source_info_version">Version %1$s</string>
+    <string name="source_info_history_title">History</string>
+    <string name="source_info_history_body">I was curious about what happens if you corrupt random bits in a JPEG file. It started with a python prototype to validate the idea. The results were interesting, so I decided to make an Android app out of it. This allowed me to get a deeper understanding of JPEG files and document it within the app. The UI was challenging and I feel it is still not optimal, but it is good enough to release.</string>
+    <string name="source_info_what_title">Glitching on purpose</string>
+    <string name="source_info_what_body">Instead of flipping bits at random we edit the parts of a JPEG that decide what the picture looks like:</string>
+    <string name="source_info_step_dqt_title">Quantization</string>
+    <string name="source_info_step_scan_title">Scan</string>
+    <string name="source_info_step_dht_title">Hoffman</string>
+    <string name="source_info_step_dqt_description">How roughly each pattern inside a block is kept.</string>
+    <string name="source_info_step_scan_description">One bad bit travels until a restart marker stops it.</string>
+    <string name="source_info_step_dht_description">Rewrites what each code stands for. One symbol can change what whole runs of blocks decode to.</string>
+    <string name="source_info_credit">© 2026</string>
+    <string name="source_info_author">Justin Michaud-Ouellette</string>
+    <string name="source_info_share">Share</string>
+    <string name="source_info_share_chooser">Share App</string>
+
+    <!-- Shared-image import (GlitchApp) -->
+    <string name="loading_shared_image">Loading shared image…</string>
+    <string name="shared_error_read">Couldn\'t read the shared image.</string>
+    <string name="shared_error_decode">Couldn\'t decode the shared image.</string>
+
+    <!-- Screen 2: resize -->
+    <string name="resize_title">Resize</string>
+    <string name="resize_source_desc">Source image</string>
+    <string name="resize_button">Resize</string>
+    <string name="resize_button_to">Resize to %1$d × %2$d</string>
+    <string name="resize_button_keep">Keep %1$d × %2$d</string>
+    <string name="resize_preset_label">%1$d px</string>
+    <string name="resize_progress">Resizing…</string>
+    <string name="resize_skip">Skip</string>
+    <string name="resize_crop_option">Crop to 9:16 (for stories)</string>
+    <string name="resize_error">Resize failed: %1$s</string>
+
+    <!-- Screen 3: quantization tables (DQT) -->
+    <string name="dqt_title">Quantization Table</string>
+    <string name="dqt_preview_desc">Preview of the quantization edit</string>
+
+    <!-- Pattern tiles -->
+    <string name="dqt_family_brightness">Brightness</string>
+    <string name="dqt_family_saturation">Saturation</string>
+    <string name="dqt_family_horizontal">Horizontal</string>
+    <string name="dqt_family_horizontal_color">Horizontal color</string>
+    <string name="dqt_family_vertical">Vertical</string>
+    <string name="dqt_family_vertical_color">Vertical color</string>
+    <string name="dqt_family_checkered">Checkered</string>
+    <string name="dqt_family_checkered_color">Checkered color</string>
+
+    <string name="dqt_family_brightness_about">Brightness (First Square)</string>
+    <string name="dqt_family_horizontal_about">Horizontal (Left Column)</string>
+    <string name="dqt_family_checkered_about">Checkered (Rest of the Grid)</string>
+    <string name="dqt_family_vertical_about">Vertical (Top Row)</string>
+
+    <string name="dqt_blurb_brightness">Moves the average of every 8x8 block: the picture gets brighter or darker.</string>
+    <string name="dqt_blurb_saturation">Moves the average color of every block: colors pull apart or wash together.</string>
+    <string name="dqt_blurb_horizontal">Horizontal bands across every block.</string>
+    <string name="dqt_blurb_horizontal_color">Horizontal bands, in color only (chroma table).</string>
+    <string name="dqt_blurb_vertical">Vertical bands across every block.</string>
+    <string name="dqt_blurb_vertical_color">Vertical bands, in color only (chroma table).</string>
+    <string name="dqt_blurb_checkered">Squares in both directions: a checkerboard when u equals v, a plaid when they differ.</string>
+    <string name="dqt_blurb_checkered_color">Squares in both directions, in color only (chroma table).</string>
+
+    <!-- Bit sheet -->
+    <string name="dqt_sheet_counts">%1$d quantizers in the %2$s table</string>
+    <string name="dqt_table_luma">luma</string>
+    <string name="dqt_table_chroma">chroma</string>
+    <string name="dqt_sheet_reset">Reset this pattern</string>
+    <string name="dqt_sheet_hint">Fine patterns need detail in the photo: rows that would change nothing are hidden.</string>
+    <string name="dqt_sheet_hint_dc">One number for every block. Turn the wheel or tap the arrows to step it one at a time.</string>
+    <string name="dqt_section_dc">Block average - moves the whole picture</string>
+    <string name="dqt_section_bands">%1$s - %2$s bands</string>
+    <string name="dqt_section_cells">%1$s - %2$s cells</string>
+    <string name="dqt_scale_coarsest">Coarsest</string>
+    <string name="dqt_scale_coarse">Coarse</string>
+    <string name="dqt_scale_medium">Medium</string>
+    <string name="dqt_scale_fine">Fine</string>
+    <string name="dqt_scale_subpixel">Sub-pixel</string>
+
+    <!-- Quantizer row: slider, value, reset; the DC rows use a number picker -->
+    <string name="dqt_row_picker_label">Block average, value %1$d</string>
+    <string name="dqt_row_reset_to">reset to %1$d</string>
+
+    <!-- DQT info screen -->
+    <string name="dqt_info_title">How DQT works</string>
+    <string name="dqt_info_intro_title">The tables behind the picture</string>
+    <string name="dqt_info_intro_body">JPEG does not store pixels. It splits the photo into 8x8 blocks, describes each block with 64 numbers, and the quantization tables (DQT) say how roughly each of those numbers is kept. Editing them changes how the photo is stored, not what was photographed.</string>
+    <string name="dqt_info_basis_title">The 64 patterns</string>
+    <string name="dqt_info_basis_desc">The 64 DCT basis patterns of an 8x8 block</string>
+    <string name="dqt_info_basis_body">Every square below is one of those 64 numbers, drawn as the pattern it adds to each block: how much it wiggles, and in which direction. The top-left is flat, so it only moves the block\'s average. The further right and down, the finer the detail it carries.</string>
+    <string name="dqt_info_family_title">Which square belongs to which button</string>
+    <string name="dqt_info_family_body">The flip screen sorts those squares into four families:</string>
+    <string name="dqt_info_family_color">Each family exists twice: the luma table (drawn here) and the chroma table, whose buttons carry the word color. The color families tint the picture instead of adding brightness detail.</string>
+    <string name="dqt_info_quant_title">What a quantizer value does</string>
+    <string name="dqt_info_quant_body">Each number is divided by its quantizer when the file is written and multiplied back when it is read, so a bigger quantizer keeps less of that pattern:</string>
+    <string name="dqt_info_quant_value">value %1$d</string>
+    <string name="dqt_info_quant_fine">kept finely - the pattern stays smooth</string>
+    <string name="dqt_info_quant_coarse">kept roughly - the pattern flattens into bands</string>
+    <string name="dqt_info_quant_zero">zero - the pattern is deleted</string>
+
+    <!-- Resize info screen -->
+    <string name="resize_info_title">Why resize first</string>
+    <string name="resize_info_blocks_title">8x8 px squares</string>
+    <string name="resize_info_blocks_body">JPEG does not store individual pixels. It cuts the picture into squares of 8 by 8 pixels no matter the width and height of the picture. Every glitch the app makes lands inside those squares, so they are also the shape of what you see when a file is corrupted.</string>
+    <string name="resize_info_blocks_one">one 8 x 8 square, shown large</string>
+    <string name="resize_info_size_title">Less pixels, bigger squares</string>
+    <string name="resize_info_size_body">Number of squares is determined by the width and height of your picture as pixels. A lower number divided by 8 will give you a lower square count: bigger squares when rendered edge to edge and a more grid like appearance.</string>
+    <string name="resize_info_size_small">128 px ↦ 16 squares</string>
+    <string name="resize_info_size_large">384 px ↦ 64 squares</string>
+    <string name="resize_info_speed_title">Faster performance</string>
+    <string name="resize_info_speed_body">Every edit requires the whole file to be decoded again to show you the result. The work is proportional to the number of squares. Halving the width and the height leaves a quarter of the squares and a quarter of the work.</string>
+    <string name="resize_info_speed_original">3472 x 4624 px ↦ 250 852 squares</string>
+    <string name="resize_info_speed_default">1736 x 2312 px ↦ 62 713 squares</string>
+    <string name="resize_info_speed_small">1080 x 1920 px ↦ 32 400 squares</string>
+    <string name="resize_info_controls_title">What the controls do</string>
+    <string name="resize_info_controls_body">The slider picks the width of the resized photo you will be working with. Crop to 9:16 is available for portrait photos and is recommended for sharing to your stories.</string>
+
+    <!-- Screen 4: glitch editor -->
+    <string name="edit_undo">Undo</string>
+    <string name="edit_flip_button">Flip bit</string>
+    <string name="edit_reset">Reset</string>
+
+    <!-- Glitch regions (short chip labels + full descriptions) -->
+    <string name="region_code_dqt">DQT</string>
+    <string name="region_code_dht">DHT</string>
+    <string name="region_code_scan">Scan</string>
+    <string name="region_code_rst">RST</string>
+    <string name="region_desc_dqt">quantization tables (DQT)</string>
+    <string name="region_desc_dht">Huffman tables (DHT)</string>
+    <string name="region_desc_scan">scan / entropy data</string>
+    <string name="region_desc_rst">restart markers (RST)</string>
+
+    <!-- Area control: which image row the damage starts at -->
+    <string name="edit_area_row">Damage starts at section %1$d%%</string>
+    <string name="edit_area_no_geometry">area control needs a readable frame header</string>
+
+    <!-- Flip readout -->
+    <string name="edit_fatal_note">%1$d bytes here are skipped: every bit flip in them makes the file undecodable.</string>
+
+    <!-- Restart-marker injection: bounds where damage stops -->
+    <string name="edit_window_section">Damage window %1$d%% tall</string>
+    <string name="edit_window_button">Bound damage (add restart markers)</string>
+    <string name="edit_window_working">Rebuilding scan…</string>
+    <string name="edit_window_active">Damage now stops at window edges: each glitch is confined to a %1$d%% tall band.</string>
+    <string name="edit_window_unsupported">Can\'t bound damage here: %1$s</string>
+    <string name="edit_window_failed">Restart injection failed: %1$s</string>
+    <string name="edit_window_done">Added %1$d restart markers — damage is now confined to %2$d%% tall bands.</string>
+
+    <!-- Export -->
+    <string name="export_saved_pictures">Saved to Pictures/Glitch/%1$s</string>
+    <string name="export_saved_path">Saved to %1$s</string>
+    <string name="export_create_failed">Export failed (couldn\'t create the file).</string>
+    <string name="export_failed">Export failed: %1$s</string>
+    <string name="export_saved">Saved to gallery</string>
+    <string name="export_view">View</string>
+    <string name="export_view_error">Could not open the picture.</string>
+
+    <!-- Byte sizes -->
+    <string name="bytes_b">%1$d B</string>
+    <string name="bytes_kb">%.1f KB</string>
+    <string name="bytes_mb">%.1f MB</string>
+
+    <!-- DHT screen -->
+    <string name="dht_title">Huffman Table</string>
+    <string name="dht_preview_desc">Preview of the Huffman table edit</string>
+    <string name="dht_back_to_scan">Back to the scan data</string>
+    <string name="dht_family_luma_detail">Luma detail</string>
+    <string name="dht_family_luma_level">Luma level</string>
+    <string name="dht_family_color_detail">color detail</string>
+    <string name="dht_family_color_level">color level</string>
+    <string name="dht_tile_changed">%1$d changed</string>
+    <string name="dht_blurb_luma_detail">The codes that carry block detail, in brightness.</string>
+    <string name="dht_blurb_luma_level">The code that carries each block\'s brightness, one per block.</string>
+    <string name="dht_blurb_color_detail">The codes that carry block detail, in color.</string>
+    <string name="dht_blurb_color_level">The code that carries each block\'s color, one per block.</string>
+    <string name="dht_sheet_counts">%1$d of %2$d codes are used by this photo</string>
+    <string name="dht_sheet_symbols">%1$d codes in this table</string>
+    <string name="dht_sheet_hint_census">Codes are listed by how often the photo uses them: the first rows are the loudest edits.</string>
+    <string name="dht_sheet_hint_length">Short codes belong to the most common blocks, so they are listed first.</string>
+    <string name="dht_sheet_hint_ac">A symbol packs a skip count and a value size. Editing it changes what every block that used that code decodes to.</string>
+    <string name="dht_sheet_hint_dc">A level symbol is a count of bits. Any change to it puts the rest of the scan out of step, so these edits are heavy.</string>
+    <string name="dht_sheet_only_used">Only codes this photo uses</string>
+    <string name="dht_sheet_reset">Reset this table</string>
+    <string name="dht_section_used">Used by this photo, most first (%1$d)</string>
+    <string name="dht_section_unused">Never used by this photo (%1$d) - changing these does nothing here</string>
+    <string name="dht_section_length">%1$d-bit codes - %2$d - %3$s</string>
+    <string name="dht_length_every_block">in almost every block</string>
+    <string name="dht_length_common">common</string>
+    <string name="dht_length_occasional">occasional</string>
+    <string name="dht_length_rarest">the rarest, if they appear at all</string>
+    <string name="dht_strip_legend">Each cell under a row is one bit of its value, colored by your own sweep of b, e, f and g: grey changed nothing, green is one you kept, red one you filed as a wreck. Tap a cell to flip that bit.</string>
+    <string name="dht_strip_unavailable">These tables are not the ones your sweep measured, so the cells cannot be colored. The sliders still work.</string>
+    <string name="dht_flip_cell">Bit %1$d: %2$s becomes %3$s. %4$s</string>
+    <string name="dht_flip_nothing">Your sweep found no visible change on the four photos.</string>
+    <string name="dht_flip_kept">Your sweep kept this: it changed %1$d of the four photos.</string>
+    <string name="dht_flip_wreck">Your sweep called this a wreck: it changed %1$d of the four photos.</string>
+    <string name="dht_flip_fatal">Your sweep has no sample: this flip stops the file decoding.</string>
+    <string name="dht_row_label">#%1$d - %2$d-bit code - %3$s</string>
+    <string name="dht_row_needs">needs %1$d bits</string>
+    <string name="dht_row_uses">used %1$s times</string>
+    <string name="dht_row_unused">never used here</string>
+    <string name="dht_row_picker_label">code %1$d, category %2$d</string>
+    <string name="dht_row_reset_to">reset to %1$d</string>
+    <string name="dht_meaning_eob">ends the block</string>
+    <string name="dht_meaning_zrl">skips 16 zeros</string>
+    <string name="dht_meaning_run_size">skip %1$d, %2$d-bit value</string>
+    <string name="dht_broken_edit">This edit no longer decodes, so there is no preview. Undo it or press Reset.</string>
+    <string name="dht_census_no_frame">The frame header could not be read, so code usage is unknown.</string>
+    <string name="dht_census_not_single_scan">This file has more than one scan, so code usage is unknown.</string>
+    <string name="dht_census_not_interleaved">This scan is not a full interleaved scan, so code usage is unknown.</string>
+    <string name="dht_census_has_restarts">This file already carries restart markers, so code usage is unknown.</string>
+    <string name="dht_census_no_tables">This file declares no Huffman tables to edit.</string>
+    <string name="dht_census_undecodable">The scan data could not be walked, so code usage is unknown.</string>
+    <string name="dht_table_missing">This file does not carry that table (a greyscale photo has luma tables only).</string>
+
+    <!-- DHT explanation -->
+    <string name="dht_info_title">How DHT works</string>
+    <string name="dht_info_intro_title">The code book behind the picture</string>
+    <string name="dht_info_intro_body">JPEG does not store coefficients as numbers. For every 8x8 block it writes a string of Huffman codes, and each code stands for a symbol that says how far along the block to jump and how many bits the value needs. The Huffman tables are the dictionary those codes are read with: the quantization tables say how roughly the picture was kept, these say how it was written down.</string>
+    <string name="dht_info_parts_title">Three parts to a table</string>
+    <string name="dht_info_parts_body">A table in the file is a header, then a list of symbols. The header names the table and gives the length of every code; the list says what each code means, in code order.</string>
+    <string name="dht_info_part_info">A byte naming the table</string>
+    <string name="dht_info_part_counts">Sixteen counts: how many codes of each length</string>
+    <string name="dht_info_part_symbols">The symbols, in code order - the only part this screen edits</string>
+    <string name="dht_info_part_info_short">name</string>
+    <string name="dht_info_part_counts_short">code lengths</string>
+    <string name="dht_info_part_symbols_short">symbols</string>
+    <string name="dht_info_parts_note">Every bit of the name byte and of the sixteen counts makes the file undecodable, so this screen never offers them: the decoder reads as many symbols as the counts ask for, and a flip in a count breaks that agreement with the list that follows.</string>
+    <string name="dht_info_book_title">A code is as loud as it is short</string>
+    <string name="dht_info_book_body">Codes are handed out by frequency: the shortest code goes to the pair of values the picture produces most often. That is what makes the position in the list the strength control - editing symbol #0 changes thousands of blocks, and editing #150 changes nothing at all.</string>
+    <string name="dht_info_book_caption">Every code of the luma detail table. The tall bright bars on the left are short codes, used constantly; the flat tail is 125 codes these photos never emit.</string>
+    <string name="dht_info_symbol_title">What a symbol means</string>
+    <string name="dht_info_symbol_body">In the detail tables a symbol packs two numbers into one byte: how many zero coefficients to skip, and how many bits the next value needs. The first coefficient of a block is coded separately, so each row below starts just after it.</string>
+    <string name="dht_info_run_small">Skip a few, then one four-bit value: the common case, and the one this code was designed for.</string>
+    <string name="dht_info_run_large">Skip nine, then one two-bit value: the same code, told to jump much further along the block.</string>
+    <string name="dht_info_run_packed">packed as %1$d</string>
+    <string name="dht_info_run_note">Two of these symbols do something special. A skip of 0 with a size of 0 ends the block; a skip of 15 with a size of 0 means sixteen zeros in a row.</string>
+    <string name="dht_info_level_title">The level tables are different</string>
+    <string name="dht_info_level_body">In the two level tables the symbol is not a pair but a single number: how many bits the block level takes. The decoder reads exactly that many bits after every code, so changing one of these symbols puts the whole rest of the scan out of step - which is why they hit the picture far harder than a detail edit of the same size.</string>
+    <string name="dht_info_breaks_title">What cannot work</string>
+    <string name="dht_info_breaks_body">Two kinds of edit are left out entirely, because no picture comes out of them.</string>
+    <string name="dht_info_breaks_counts">Every bit of a code length count. A changed count either overruns the table or leaves bytes over that the decoder then reads as the next table.</string>
+    <string name="dht_info_breaks_dc">A level symbol of 16 or more. A block level cannot need more bits than the sample size, and past 15 the decoder stops on the stream.</string>
+    <string name="dht_info_limits_title">Worth knowing</string>
+    <string name="dht_info_limit_dead">Most of a table is usually dead weight. On the four sample photos only 77 of the luma detail table\'s 162 codes are ever emitted, and 45 of the color detail table\'s - so most of the available edits cannot change anything on that photo. This screen counts that per image and hides the dead ones.</string>
+    <string name="dht_info_limit_content">A code being used is not the same as a visible change. Skipping one more coefficient, or reading one bit more, can land inside what the encoder already rounded away - two thirds of the sample batch measured as no visible change at all.</string>
+    <string name="dht_info_limit_chroma">Detail edits in the color table register in the color channels rather than the brightness; the level tables move brightness on the luma side and color on the chroma side.</string>
+    <string name="about">About</string>
+
+    <!-- Final preview screen -->
+    <string name="preview_title">Final Preview</string>
+    <string name="preview_image_desc">Preview of the finished picture</string>
+    <string name="preview_share">Share</string>
+    <string name="preview_save">Save to gallery</string>
+    <string name="preview_restart">Restart</string>
+    <string name="preview_restart_title">Start over?</string>
+    <string name="preview_restart_body">This picture has not been saved.</string>
+    <string name="preview_restart_confirm">Restart</string>
+    <string name="preview_restart_cancel">Cancel</string>
+    <string name="preview_format_section">Output format</string>
+    <string name="format_raw_jpeg">Raw JPEG</string>
+    <string name="format_jpeg">JPEG</string>
+    <string name="format_png">PNG</string>
+    <string name="format_webp">WebP</string>
+    <string name="preview_format_raw_jpeg_note">The glitched file exactly as it is — nothing is decoded or encoded again.</string>
+    <string name="preview_format_jpeg_note">The picture decoded and written again as a JPEG, so it is smaller than raw — but it is no longer the bytes your flips made.</string>
+    <string name="preview_format_png_note">Lossless, but the picture is decoded and written again as a PNG.</string>
+    <string name="preview_format_webp_note">The smallest of the three, and lossy: the picture is decoded and written again.</string>
+    <string name="preview_encode_failed">Could not write the picture as %1$s.</string>
+    <string name="preview_permission">Allow storage access to save the picture.</string>
+    <string name="preview_share_chooser">Share the finished picture</string>
+    <string name="preview_share_error">Could not share: %1$s</string>
+
+    <!-- Preview explanation -->
+    <string name="preview_info_title">How the picture leaves</string>
+    <string name="preview_info_intro_title">Nothing here changes the picture</string>
+    <string name="preview_info_intro_body">By the time this screen appears the picture is finished. The resize screen set its size and crop, the quantization screen set how roughly each frequency is kept, and the scan screen flipped bits in the scan data - and the Huffman tables were retuned from that screen, if they were retuned at all. All this screen decides is what file those bytes leave the app as, and where the file goes.</string>
+    <string name="preview_info_formats_title">Four choices, two kinds of file</string>
+    <string name="preview_info_formats_body">Raw JPEG is not re-encoded at all: the bytes handed to save or share are the bytes the flips made, exactly. That is the point of glitching a JPEG - the damage is in those bytes, and copying them costs nothing. The other three are built from the decoded picture instead: a plain JPEG at the app\'s own quality, or a PNG or a WebP, each written out again with the damage redrawn into pixels. They read the same and they are not the same file - and it is a one-way trip, because encoding a glitched picture to a PNG does not give you something you can come back and edit here later.</string>
+    <string name="preview_info_card_bytes">exact bytes</string>
+    <string name="preview_info_card_reencoded">re-encoded</string>
+    <string name="preview_info_save_title">Saving, sharing, and where things go</string>
+    <string name="preview_info_save_body">Save writes the file into Pictures/Glitch. Share saves nothing: it puts a copy in the app\'s own cache and hands it to whichever app you pick, and that app decides what it keeps. The two are independent, so a picture can be sent without ever reaching the gallery. Restart is the first button: it leaves all of this behind and goes back to the picker for another photo, asking first while the file has not been saved.</string>
+</resources>
+
