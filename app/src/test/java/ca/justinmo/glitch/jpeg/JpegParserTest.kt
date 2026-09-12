@@ -164,4 +164,197 @@ class JpegParserTest {
       assertTrue(JpegParser.parse(working).scan.isNotEmpty() || flippedBits == 0)
     }
   }
+
+  // --- Fatal-byte exclusion -------------------------------------------------
+  //
+  // Exhaustive single-bit sweeps (every bit of every DQT/DHT byte, full decode)
+  // found bytes where all 8 bits make the file undecodable:
+  //   - DQT: the table spec byte before each 64/128-entry table
+  //   - DHT: the table spec byte plus the 16 code-length counts (BITS[1..16])
+  // jpeg_tables_count.py counts 2 DQT tables and 8 DHT tables in a.jpg,
+  // 2 and 4 in b.jpg, i.e. 2 and 4*(17)=68 fatal bytes in b.jpg.
+
+  @Test
+  fun fatalBytesAreExcludedFromFlippableRegions() {
+    for ((rel, dhtTables) in listOf("../a.jpg" to 8, "../b.jpg" to 4)) {
+      val file = File(rel)
+      assumeTrue("fixture missing: ${file.absolutePath}", file.exists())
+      val s = JpegParser.parse(file.readBytes())
+
+      assertEquals("$rel DQT fatal bytes (2 spec bytes)", 2, s.fatalByteCount(GlitchRegion.DQT))
+      assertEquals("$rel DQT usable bytes", 128, s.flippableByteCount(GlitchRegion.DQT))
+      assertEquals(
+        "$rel DHT fatal bytes (spec + 16 counts per table)",
+        17 * dhtTables,
+        s.fatalByteCount(GlitchRegion.DHT),
+      )
+      assertEquals(
+        "$rel DHT usable bytes",
+        s.byteCount(GlitchRegion.DHT) - 17 * dhtTables,
+        s.flippableByteCount(GlitchRegion.DHT),
+      )
+      // Scan data holds no fatal bytes: every scan byte is a legitimate target.
+      assertEquals(
+        "$rel SCAN must be fully flippable",
+        s.byteCount(GlitchRegion.SCAN),
+        s.flippableByteCount(GlitchRegion.SCAN),
+      )
+
+      // Usable + fatal must reconstruct each region exactly, and no byte in the
+      // usable set may be fatal.
+      for (region in listOf(GlitchRegion.DQT, GlitchRegion.DHT, GlitchRegion.SCAN)) {
+        assertEquals(
+          "$rel $region usable + fatal == total",
+          s.byteCount(region),
+          s.flippableByteCount(region) + s.fatalByteCount(region),
+        )
+        for (span in s.flippableSpans(region)) {
+          for (offset in span.start until span.endExclusive) {
+            assertTrue("$rel $region byte $offset must not be fatal", !s.isFatal(offset))
+          }
+        }
+      }
+    }
+  }
+
+  @Test
+  fun flipRandomSafeBitNeverLandsOnAFatalByte() {
+    val file = File("../b.jpg")
+    assumeTrue("fixture missing: ${file.absolutePath}", file.exists())
+    val original = file.readBytes()
+    val s = JpegParser.parse(original)
+    val rng = Random(4242)
+    for (region in listOf(GlitchRegion.DQT, GlitchRegion.DHT)) {
+      val usable = s.flippableSpans(region)
+      repeat(300) {
+        val working = original.copyOf()
+        val flipped = JpegGlitch.flipRandomSafeBit(working, s.spansOf(region), s.fatal, rng)
+        assertNotNull("$region should have usable bytes", flipped)
+        assertTrue(
+          "$region flip landed on a fatal byte at ${flipped!!.first}",
+          !s.isFatal(flipped.first),
+        )
+        assertTrue(
+          "$region flip must stay in the usable set",
+          usable.any { flipped.first >= it.start && flipped.first < it.endExclusive },
+        )
+      }
+    }
+  }
+
+  // --- Progressive per-scan metadata ---------------------------------------
+  //
+  // a.jpg is progressive with 10 scans. Reference values produced directly from
+  // the SOS headers (jpeg_tables_count.py); corrupting scan 0 measured 47.7% of
+  // pixels changed on average versus 0.0% for the scan 6 DC refinement, which is
+  // why these need to be separately targetable instead of one "Scan" region.
+
+  @Test
+  fun progressiveScanHeadersMatchReference() {
+    val file = File("../a.jpg")
+    assumeTrue("fixture missing: ${file.absolutePath}", file.exists())
+    val s = JpegParser.parse(file.readBytes())
+    assertTrue("a.jpg must parse as progressive", s.isProgressive)
+    assertEquals(10, s.scans.size)
+
+    // bytes, componentIds, Ss, Se, Ah, Al
+    val expected = listOf(
+      listOf(35_207, listOf(1, 2, 3), 0, 0, 0, 1),
+      listOf(17_686, listOf(1), 1, 5, 0, 2),
+      listOf(3_702, listOf(3), 1, 63, 0, 1),
+      listOf(3_115, listOf(2), 1, 63, 0, 1),
+      listOf(3_114, listOf(1), 6, 63, 0, 2),
+      listOf(23_043, listOf(1), 1, 63, 2, 1),
+      listOf(9_931, listOf(1, 2, 3), 0, 0, 1, 0),
+      listOf(6_224, listOf(3), 1, 63, 1, 0),
+      listOf(6_007, listOf(2), 1, 63, 1, 0),
+      listOf(51_179, listOf(1), 1, 63, 1, 0),
+    )
+    s.scans.forEachIndexed { i, scan ->
+      assertEquals("scan $i bytes", expected[i][0], scan.byteCount)
+      assertEquals("scan $i components", expected[i][1], scan.componentIds)
+      assertEquals("scan $i Ss", expected[i][2], scan.ss)
+      assertEquals("scan $i Se", expected[i][3], scan.se)
+      assertEquals("scan $i Ah", expected[i][4], scan.ah)
+      assertEquals("scan $i Al", expected[i][5], scan.al)
+    }
+    // Scan 0 is the DC scan and scan 6 a DC refinement - the two ends of the
+    // usefulness range the UI now labels.
+    assertTrue("scan 0 must be the DC scan", s.scans[0].isDcOnly)
+    assertTrue("scan 0 is not a refinement", !s.scans[0].isRefinement)
+    assertTrue("scan 6 must be a DC refinement", s.scans[6].isRefinement && s.scans[6].isDcOnly)
+    // Every scan must have its own geometry for the area slider.
+    assertEquals(10, s.geometry.size)
+  }
+
+  @Test
+  fun baselineFileHasOneFullScan() {
+    val file = File("../b.jpg")
+    assumeTrue("fixture missing: ${file.absolutePath}", file.exists())
+    val s = JpegParser.parse(file.readBytes())
+    assertTrue("b.jpg must parse as baseline", !s.isProgressive)
+    assertEquals(1, s.scans.size)
+    assertTrue("b.jpg scan must be the full baseline scan", s.scans[0].isBaselineFull)
+    assertEquals(3, s.scans[0].componentCount)
+  }
+
+  // --- Area control: the offset <-> image-row mapping -----------------------
+
+  @Test
+  fun geometryAimsDamageWithinOneUnitRow() {
+    for (rel in listOf("../a.jpg", "../b.jpg")) {
+      val file = File(rel)
+      assumeTrue("fixture missing: ${file.absolutePath}", file.exists())
+      val s = JpegParser.parse(file.readBytes())
+      for (geom in s.geometry) {
+        val rowHeight = geom.rowsPerUnitRow.toFloat() / geom.imageHeight
+        for (step in 1..9) {
+          val aim = step / 10f
+          val band = geom.byteSpanForRowFraction(aim)
+          assertTrue(
+            "$rel scan#${geom.scan.index} band at $aim must be non-empty",
+            band.size >= 1,
+          )
+          // The band must lie inside the target scan.
+          assertTrue(
+            "$rel scan#${geom.scan.index} band must stay inside the scan",
+            band.start >= geom.scan.start && band.endExclusive <= geom.scan.endExclusive,
+          )
+          val start = geom.damageStartFraction(band.start)
+          val end = geom.damageStartFraction((band.endExclusive - 1).coerceAtLeast(band.start))
+          assertEquals(
+            "$rel scan#${geom.scan.index} aim $aim within one unit row",
+            aim,
+            start,
+            rowHeight + 1e-6f,
+          )
+          // A band may straddle one row boundary, never more.
+          assertTrue(
+            "$rel scan#${geom.scan.index} band spans more than one unit row at $aim",
+            kotlin.math.abs(end - start) <= rowHeight + 1e-6f,
+          )
+        }
+      }
+    }
+  }
+
+  @Test
+  fun geometryMatchesFrameAndMcuCounts() {
+    val file = File("../b.jpg")
+    assumeTrue("fixture missing: ${file.absolutePath}", file.exists())
+    val s = JpegParser.parse(file.readBytes())
+    val frame = s.frame
+    assertNotNull("b.jpg must expose a frame header", frame)
+    assertEquals(3472, frame!!.width)
+    assertEquals(4624, frame.height)
+    assertEquals(16, frame.mcuWidth)
+    assertEquals(16, frame.mcuHeight)
+    assertEquals(217, frame.mcusPerRow)
+    assertEquals(289, frame.mcuRows)
+    val geom = s.geometryFor(0)
+    assertNotNull("b.jpg scan 0 must have geometry", geom)
+    assertEquals("interleaved MCU grid", 217 * 289, geom!!.totalUnits)
+    assertEquals(217, geom.unitsPerRow)
+    assertEquals(frame.mcuHeight, geom.rowsPerUnitRow)
+  }
 }

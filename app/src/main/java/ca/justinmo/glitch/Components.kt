@@ -117,4 +117,13 @@ internal fun regionCodeRes(region: GlitchRegion): Int = when (region) {
   GlitchRegion.DQT -> R.string.region_code_dqt
   GlitchRegion.DHT -> R.string.region_code_dht
   GlitchRegion.SCAN -> R.string.region_code_scan
+  GlitchRegion.RST -> R.string.region_code_rst
+}
+
+/** String resource id of the long description for a glitch region. */
+internal fun regionDescriptionRes(region: GlitchRegion): Int = when (region) {
+  GlitchRegion.DQT -> R.string.region_desc_dqt
+  GlitchRegion.DHT -> R.string.region_desc_dht
+  GlitchRegion.SCAN -> R.string.region_desc_scan
+  GlitchRegion.RST -> R.string.region_desc_rst
 }

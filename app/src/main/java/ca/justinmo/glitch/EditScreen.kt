@@ -1,6 +1,7 @@
 package ca.justinmo.glitch
 
 import android.Manifest
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
@@ -30,6 +31,8 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -43,6 +46,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
@@ -51,10 +55,16 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import ca.justinmo.glitch.jpeg.ByteSpan
+import ca.justinmo.glitch.jpeg.ByteSpans
 import ca.justinmo.glitch.jpeg.GlitchRegion
+import ca.justinmo.glitch.jpeg.JpegFrame
 import ca.justinmo.glitch.jpeg.JpegGlitch
 import ca.justinmo.glitch.jpeg.JpegParser
+import ca.justinmo.glitch.jpeg.ScanGeometry
+import ca.justinmo.glitch.jpeg.ScanInfo
 import java.io.File
+import kotlin.math.roundToInt
 import kotlin.random.Random
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -73,9 +83,14 @@ internal fun EditScreen(
   val context = LocalContext.current
   val scope = rememberCoroutineScope()
   val structure = remember(sourceBytes) { JpegParser.parse(sourceBytes) }
+  val componentNames = remember(structure) { componentShortNames(structure.frame) }
 
-  var region by remember { mutableStateOf(GlitchRegion.DQT
-  ) }
+  var region by remember(sourceBytes) { mutableStateOf(GlitchRegion.SCAN) }
+  // Progressive files expose one knob per scan; see ScanInfo in jpeg/JpegGlitch.kt.
+  var scanIndex by remember(sourceBytes) { mutableIntStateOf(0) }
+  // Where the damage should begin, as a fraction of image height.
+  var areaFraction by remember(sourceBytes) { mutableFloatStateOf(0.5f) }
+  var readout by remember(sourceBytes) { mutableStateOf<String?>(null) }
   var bytes by remember { mutableStateOf(sourceBytes) }
   var history by remember { mutableStateOf(emptyList<ByteArray>()) }
   var bitmap by remember { mutableStateOf<Bitmap?>(null) }
@@ -100,14 +115,37 @@ internal fun EditScreen(
     if (bmp == null) error = context.getString(R.string.edit_error_decode)
   }
 
+  val geometry: ScanGeometry? = structure.geometryFor(scanIndex)
+
+  /**
+   * Bytes the next flip may land in.
+   *
+   * For scan data this is the MCU row the area slider points at: entropy data is
+   * stored MCU by MCU in raster order, so a flip inside that row starts its
+   * damage there. Fatal bytes are always removed - flipping them can only ever
+   * make the file undecodable.
+   */
+  fun targetSpans(): List<ByteSpan> = when (region) {
+    GlitchRegion.SCAN -> {
+      val geom = geometry
+      if (geom != null) {
+        ByteSpans.subtract(listOf(geom.byteSpanForRowFraction(areaFraction)), structure.fatal)
+      } else {
+        structure.flippableSpans(GlitchRegion.SCAN)
+      }
+    }
+    else -> structure.flippableSpans(region)
+  }
+
   fun flipBit() {
     if (busy || bitmap == null) return
     busy = true
     error = null
     val rgn = region
-    val spans = structure.spansOf(rgn)
+    val spans = targetSpans()
     val startBytes = bytes
     val startBmp = bitmap
+    val geom = geometry
     scope.launch {
       if (spans.sumOf { it.size } == 0) {
         busy = false
@@ -117,22 +155,28 @@ internal fun EditScreen(
         )
         return@launch
       }
-      // Flip one random bit in the region; roll back flips the JPEG decoder
-      // rejects or that leave the picture pixel-identical, like jpg_glitch.py.
+      // Flip bits in the target bytes; roll back flips the JPEG decoder rejects
+      // or that leave the picture pixel-identical, like jpg_glitch.py. Roughly a
+      // third of bytes are no-ops for all 8 of their bits, which is why a single
+      // press may need a few tries to find one that takes effect.
       val rng = Random(System.nanoTime())
       var acceptedBytes: ByteArray? = null
       var acceptedBmp: Bitmap? = null
+      var acceptedPos = 0
+      var acceptedBit = 0
       var attempts = 0
       while (attempts < JpegGlitch.MAX_FLIP_TRIES) {
         attempts++
         val probe = startBytes.copyOf()
-        JpegGlitch.flipRandomBit(probe, spans, rng) ?: break
+        val flipped = JpegGlitch.flipRandomBit(probe, spans, rng) ?: break
         val decoded = withContext(Dispatchers.Default) { decodeJpeg(probe) }
         if (decoded == null) continue // undecodable - roll back, try another bit
         val visible = startBmp == null || !decoded.sameAs(startBmp)
         if (!visible) continue // no pixel change - roll back, try another bit
         acceptedBytes = probe
         acceptedBmp = decoded
+        acceptedPos = flipped.first
+        acceptedBit = flipped.second
         break
       }
       val newBytes = acceptedBytes
@@ -142,6 +186,25 @@ internal fun EditScreen(
         bytes = newBytes
         bitmap = newBmp
         flips++
+        val retried = if (attempts > 1) {
+          context.getString(R.string.edit_flip_retried, attempts - 1)
+        } else {
+          ""
+        }
+        readout = if (geom != null) {
+          context.getString(
+            R.string.edit_flip_readout,
+            "0x${acceptedPos.toString(16)}",
+            acceptedBit,
+            (geom.damageStartFraction(acceptedPos) * 100).roundToInt(),
+          ) + retried
+        } else {
+          context.getString(
+            R.string.edit_flip_readout_plain,
+            "0x${acceptedPos.toString(16)}",
+            acceptedBit,
+          ) + retried
+        }
       } else {
         error = context.getString(R.string.edit_error_no_bit, attempts)
       }
@@ -156,6 +219,7 @@ internal fun EditScreen(
     bytes = prevBytes
     flips--
     error = null
+    readout = null
     busy = true
     scope.launch {
       val bmp = withContext(Dispatchers.Default) { decodeJpeg(prevBytes) }
@@ -169,6 +233,7 @@ internal fun EditScreen(
     history = emptyList()
     flips = 0
     error = null
+    readout = null
     scale = 1f
     offset = Offset.Zero
     scope.launch {
@@ -252,6 +317,7 @@ internal fun EditScreen(
               translationY = offset.y,
             ),
           contentScale = ContentScale.Fit,
+          filterQuality = FilterQuality.None,
         )
       } else {
         CircularProgressIndicator()
@@ -274,18 +340,14 @@ internal fun EditScreen(
           horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
           GlitchRegion.entries.forEach { r ->
+            val total = structure.byteCount(r)
+            val usable = structure.flippableByteCount(r)
             FilterChip(
               selected = region == r,
-              enabled = structure.byteCount(r) > 0,
+              enabled = usable > 0,
               onClick = { region = r },
               label = {
-                Text(
-                  text = stringResource(
-                    R.string.edit_region_chip,
-                    stringResource(regionCodeRes(r)),
-                    formatBytes(structure.byteCount(r)),
-                  ),
-                )
+                Text(text = regionChipLabel(r, usable, total - usable))
               },
               colors = FilterChipDefaults.filterChipColors(
                 containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -296,6 +358,108 @@ internal fun EditScreen(
             )
           }
         }
+
+        // Spell out what the selected chip means: "DQT" alone is cryptic, and
+        // the three regions behave completely differently.
+        Spacer(Modifier.height(4.dp))
+        Text(
+          text = stringResource(regionDescriptionRes(region)),
+          style = MaterialTheme.typography.bodySmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+      }
+
+      // Progressive files hide ~10 semantically different knobs behind the single
+      // "Scan" chip; the DC scan is a global nuke while a DC refinement pass is
+      // invisible. Pick the scan individually, then aim where its damage starts.
+      if (region == GlitchRegion.SCAN) {
+        Column(
+          modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 24.dp),
+        ) {
+          if (structure.scans.size > 1) {
+            Spacer(Modifier.height(8.dp))
+            Text(
+              text = stringResource(R.string.edit_scan_section),
+              style = MaterialTheme.typography.labelMedium,
+              color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(4.dp))
+            Row(
+              modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+              horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+              structure.scans.forEach { scan ->
+                FilterChip(
+                  selected = scanIndex == scan.index,
+                  enabled = scan.byteCount > 0,
+                  onClick = { scanIndex = scan.index },
+                  label = {
+                    Text(
+                      text = stringResource(
+                        R.string.edit_scan_chip,
+                        scan.index,
+                        scanDescriptor(scan, componentNames),
+                      ),
+                    )
+                  },
+                  colors = FilterChipDefaults.filterChipColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    labelColor = MaterialTheme.colorScheme.onSurface,
+                    selectedContainerColor = MaterialTheme.colorScheme.tertiary,
+                    selectedLabelColor = MaterialTheme.colorScheme.onTertiary
+                  )
+                )
+              }
+            }
+          }
+
+          Spacer(Modifier.height(8.dp))
+          Text(
+            text = stringResource(
+              R.string.edit_area_section,
+              (areaFraction * 100).roundToInt(),
+            ),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+          )
+          Slider(
+            value = areaFraction,
+            onValueChange = { areaFraction = it },
+            valueRange = 0f..1f,
+            colors = SliderDefaults.colors(
+              thumbColor = MaterialTheme.colorScheme.primary,
+              activeTrackColor = MaterialTheme.colorScheme.primary,
+            ),
+          )
+          val geom = geometry
+          Text(
+            text = if (geom != null) {
+              stringResource(
+                R.string.edit_area_row,
+                (geom.unitRowFraction(unitRowFor(geom, areaFraction)) * geom.imageHeight)
+                  .roundToInt(),
+                geom.imageHeight,
+              )
+            } else {
+              stringResource(R.string.edit_area_no_geometry)
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+          )
+        }
+      }
+
+      val skipped = structure.fatalByteCount(region)
+      if (skipped > 0) {
+        Spacer(Modifier.height(4.dp))
+        Text(
+          text = stringResource(R.string.edit_fatal_note, skipped),
+          modifier = Modifier.padding(horizontal = 24.dp),
+          style = MaterialTheme.typography.bodySmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
       }
 
       Spacer(modifier = Modifier.weight(1f))
@@ -306,6 +470,14 @@ internal fun EditScreen(
           .padding(horizontal = 24.dp)
           .padding(top = 16.dp, bottom = 24.dp),
       ) {
+        readout?.let {
+          Text(
+            it,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+          )
+          Spacer(Modifier.height(4.dp))
+        }
         error?.let {
           Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
           Spacer(Modifier.height(8.dp))
@@ -427,5 +599,67 @@ internal fun EditScreen(
         }
       }
     }
+  }
+}
+
+/** Unit row index the area slider currently points at. */
+private fun unitRowFor(geometry: ScanGeometry, areaFraction: Float): Int {
+  val targetRow = (areaFraction * geometry.imageHeight).toInt()
+  return (targetRow / geometry.rowsPerUnitRow.coerceAtLeast(1))
+    .coerceIn(0, (geometry.unitRows - 1).coerceAtLeast(0))
+}
+
+/** "Y" / "Cb" / "Cr" for each frame component id, in frame-header order. */
+private fun componentShortNames(frame: JpegFrame?): Map<Int, String> {
+  val fallback = listOf("Y", "Cb", "Cr")
+  val components = frame?.components ?: return emptyMap()
+  return components.withIndex().associate { (index, component) ->
+    component.id to (fallback.getOrNull(index) ?: "C${component.id}")
+  }
+}
+
+/**
+ * Human description of what a scan encodes: "DC · all", "AC 1-5 · Y",
+ * "refine DC · all". In a progressive file these are the real knob labels -
+ * the DC scan carries the whole image, an AC band only its frequency range.
+ */
+@Composable
+private fun scanDescriptor(scan: ScanInfo, names: Map<Int, String>): String {
+  val spectral = when {
+    scan.isBaselineFull -> stringResource(R.string.edit_scan_baseline)
+    scan.isDcOnly -> stringResource(R.string.edit_scan_dc)
+    else -> stringResource(R.string.edit_scan_ac, scan.ss, scan.se)
+  }
+  val prefixed = if (scan.isRefinement) {
+    stringResource(R.string.edit_scan_refine_prefix) + spectral
+  } else {
+    spectral
+  }
+  val components = if (scan.componentCount >= 3) {
+    stringResource(R.string.edit_scan_components_all)
+  } else {
+    scan.componentIds.joinToString("+") { names[it] ?: "C$it" }
+  }
+  return "$prefixed · $components"
+}
+
+/**
+ * Region chip text, showing how much of the region is actually usable. DHT is
+ * roughly 16% fatal and 61% no-op, so it should not look like an equal choice
+ * next to DQT when ~77% of it can never produce anything worth keeping.
+ */
+@Composable
+private fun regionChipLabel(region: GlitchRegion, usable: Int, fatal: Int): String {
+  val code = stringResource(regionCodeRes(region))
+  return when {
+    usable <= 0 && fatal <= 0 -> stringResource(R.string.edit_region_chip, code, formatBytes(0))
+    usable <= 0 -> stringResource(R.string.edit_region_all_fatal, code)
+    fatal <= 0 -> stringResource(R.string.edit_region_chip, code, formatBytes(usable))
+    else -> stringResource(
+      R.string.edit_region_chip_some_fatal,
+      code,
+      formatBytes(usable),
+      (fatal * 100) / (usable + fatal),
+    )
   }
 }

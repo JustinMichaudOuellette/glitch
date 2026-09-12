@@ -26,7 +26,6 @@
 
     <!-- Screen 2: resize -->
     <string name="resize_title">Resize</string>
-    <string name="resize_body">Large photos are slow to glitch (each flip re-decodes the whole file). Shrinking the picture first makes the glitches fast and punchy.</string>
     <string name="resize_image_meta">%1$s · %2$s · %3$s</string>
     <string name="resize_image_meta_simple">%1$s · %2$s</string>
     <string name="image_resolution">%1$d × %2$d</string>
@@ -40,8 +39,6 @@
 
     <!-- Screen 3: glitch editor -->
     <string name="edit_image_desc">Glitched image</string>
-    <string name="edit_region_chip">%1$s · %2$s</string>
-    <string name="edit_region_stats">%1$s · %2$s · flips: %3$d</string>
     <string name="edit_undo">Undo</string>
     <string name="edit_flip_button">Flip bit</string>
     <string name="edit_glitching">Glitching…</string>
@@ -60,9 +57,36 @@
     <string name="region_code_dqt">DQT</string>
     <string name="region_code_dht">DHT</string>
     <string name="region_code_scan">Scan</string>
+    <string name="region_code_rst">RST</string>
     <string name="region_desc_dqt">quantization tables (DQT)</string>
     <string name="region_desc_dht">Huffman tables (DHT)</string>
     <string name="region_desc_scan">scan / entropy data</string>
+    <string name="region_desc_rst">restart markers (RST)</string>
+
+    <!-- Region statistics: "Scan · 1.4 MB", "DHT · 348 B (16% fatal)" -->
+    <string name="edit_region_chip">%1$s · %2$s</string>
+    <string name="edit_region_chip_some_fatal">%1$s · %2$s (%3$d%% fatal)</string>
+    <string name="edit_region_all_fatal">%1$s · no safe bytes</string>
+
+    <!-- Progressive scan selector: one entry per scan of the file -->
+    <string name="edit_scan_section">Which scan to corrupt</string>
+    <string name="edit_scan_chip">%1$d · %2$s</string>
+    <string name="edit_scan_dc">DC</string>
+    <string name="edit_scan_ac">AC %1$d–%2$d</string>
+    <string name="edit_scan_refine_prefix">refine </string>
+    <string name="edit_scan_components_all">all</string>
+    <string name="edit_scan_baseline">full scan</string>
+
+    <!-- Area control: which image row the damage starts at -->
+    <string name="edit_area_section">Damage starts %1$d%% down the image</string>
+    <string name="edit_area_row">starts at row %1$d of %2$d</string>
+    <string name="edit_area_no_geometry">area control needs a readable frame header</string>
+
+    <!-- Flip readout -->
+    <string name="edit_flip_readout">byte %1$s · bit %2$d · damage from %3$d%% down</string>
+    <string name="edit_flip_readout_plain">byte %1$s · bit %2$d</string>
+    <string name="edit_flip_retried"> (retried %1$d)</string>
+    <string name="edit_fatal_note">%1$d bytes here are skipped: every bit flip in them makes the file undecodable.</string>
 
     <!-- Export -->
     <string name="export_saved_pictures">Saved to Pictures/Glitch/%1$s</string>

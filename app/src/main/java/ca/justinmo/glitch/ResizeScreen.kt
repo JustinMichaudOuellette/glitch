@@ -34,6 +34,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
@@ -178,6 +179,7 @@ internal fun ResizeScreen(
               translationY = offset.y,
             ),
           contentScale = ContentScale.Fit,
+          filterQuality = FilterQuality.None,
         )
       } else {
         CircularProgressIndicator()
@@ -187,19 +189,6 @@ internal fun ResizeScreen(
     // Controls (Layer 1: Foreground UI)
     Column(modifier = Modifier.fillMaxSize().safeDrawingPadding()) {
       TitleBar(title = stringResource(R.string.resize_title), isAboveMedia = true, onBack = onBack)
-
-      Column(
-        modifier = Modifier
-          .fillMaxWidth()
-          .padding(horizontal = 24.dp)
-          .padding(top = 8.dp),
-      ) {
-        Text(
-          text = stringResource(R.string.resize_body),
-          style = MaterialTheme.typography.bodyMedium,
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-      }
 
       Spacer(modifier = Modifier.weight(1f))
 
