@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -44,6 +46,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import kotlin.math.abs
 import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -114,7 +117,7 @@ internal fun ResizeScreen(
   val scope = rememberCoroutineScope()
   var preview by remember(bytes) { mutableStateOf<Bitmap?>(null) }
   var resolution by remember(bytes) { mutableStateOf<Pair<Int, Int>?>(null) }
-  var cropForStories by remember(bytes) { mutableStateOf(false) }
+  var cropForStories by remember(bytes) { mutableStateOf(true) }
   var targetSize by remember(bytes) { mutableIntStateOf(DEFAULT_RESIZE_PX) }
   var working by remember { mutableStateOf(false) }
   var error by remember { mutableStateOf<String?>(null) }
@@ -159,10 +162,14 @@ internal fun ResizeScreen(
   }
 
   Box(modifier = Modifier.fillMaxSize()) {
-    // Current frame (Layer 0: Background zoomable preview)
+    // Current frame (Layer 0: Background zoomable preview). The status bar
+    // inset keeps the top edge of the auto-cropped preview flush against the
+    // status bar instead of running underneath it.
     Box(
-      modifier = Modifier.fillMaxSize(),
-      contentAlignment = Alignment.Center,
+      modifier = Modifier
+        .fillMaxSize()
+        .statusBarsPadding(),
+      contentAlignment = Alignment.TopCenter,
     ) {
       val bmp = displayedPreview
       if (bmp != null) {
@@ -179,15 +186,19 @@ internal fun ResizeScreen(
               translationY = offset.y,
             ),
           contentScale = ContentScale.Fit,
+          alignment = Alignment.TopCenter,
           filterQuality = FilterQuality.None,
         )
       } else {
-        CircularProgressIndicator()
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+          CircularProgressIndicator()
+        }
       }
     }
 
     // Controls (Layer 1: Foreground UI)
-    Column(modifier = Modifier.fillMaxSize().safeDrawingPadding()) {
+    Column(modifier = Modifier.fillMaxSize()) {
+      Spacer(modifier = Modifier.statusBarsPadding())
       TitleBar(title = stringResource(R.string.resize_title), isAboveMedia = true, onBack = onBack)
 
       Spacer(modifier = Modifier.weight(1f))
@@ -195,112 +206,116 @@ internal fun ResizeScreen(
       Column(
         modifier = Modifier
           .fillMaxWidth()
+          .navigationBarsPadding()
           .padding(horizontal = 24.dp)
           .padding(top = 16.dp, bottom = 24.dp),
       ) {
-        val sizeText = formatBytes(bytes.size)
-        val res = resolution
-        Text(
-          text = if (res != null) {
-            stringResource(
-              R.string.resize_image_meta,
-              name,
-              stringResource(R.string.image_resolution, res.first, res.second),
-              sizeText,
-            )
-          } else {
-            stringResource(R.string.resize_image_meta_simple, name, sizeText)
-          },
-          style = MaterialTheme.typography.bodySmall,
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+      val res = resolution
 
+      Spacer(Modifier.height(16.dp))
+
+      // Pick the output width with a seek bar: from 128 px up to
+      // half of the original width (never below 1080 px so it's always
+      // selectable). The bar snaps to a coarse grid anchored at 1080 px;
+      // every stop is a multiple of 8.
+      val widthPx = res?.first
+      val maxTargetPx = (widthPx?.let { half -> max(DEFAULT_RESIZE_PX, half / 2) }
+        ?: DEFAULT_RESIZE_PX).let { (it / 8) * 8 }
+      val allowedSizes = remember(maxTargetPx) {
+        allowedResizeSizes(MIN_RESIZE_PX, maxTargetPx, DEFAULT_RESIZE_PX, RESIZE_STEP_PX)
+      }
+      Text(
+        text = stringResource(R.string.resize_preset_label, targetSize),
+        modifier = Modifier.fillMaxWidth(),
+        style = MaterialTheme.typography.titleMedium,
+        textAlign = TextAlign.Center,
+      )
+      Slider(
+        value = targetSize.toFloat(),
+        onValueChange = { v ->
+          targetSize = allowedSizes.minByOrNull { abs(it - v.roundToInt()) } ?: targetSize
+        },
+        valueRange = MIN_RESIZE_PX.toFloat()..maxTargetPx.toFloat(),
+        modifier = Modifier.fillMaxWidth(),
+      )
+
+      // Crop toggle only makes sense when the photo isn't already 9:16.
+      if (res != null && !isStoriesAspect(res.first, res.second)) {
         Spacer(Modifier.height(16.dp))
-
-        // Pick the output size (long edge) with a seek bar: from 128 px up to
-        // half of the original long edge (never below 1080 px so it's always
-        // selectable). The bar snaps to a coarse grid anchored at 1080 px;
-        // every stop is a multiple of 8.
-        val longEdgePx = res?.let { max(it.first, it.second) }
-        val maxTargetPx = (longEdgePx?.let { half -> max(DEFAULT_RESIZE_PX, half / 2) }
-          ?: DEFAULT_RESIZE_PX).let { (it / 8) * 8 }
-        val allowedSizes = remember(maxTargetPx) {
-          allowedResizeSizes(MIN_RESIZE_PX, maxTargetPx, DEFAULT_RESIZE_PX, RESIZE_STEP_PX)
-        }
-        Text(
-          text = stringResource(R.string.resize_preset_label, targetSize),
-          modifier = Modifier.fillMaxWidth(),
-          style = MaterialTheme.typography.titleMedium,
-          textAlign = TextAlign.Center,
-        )
-        Slider(
-          value = targetSize.toFloat(),
-          onValueChange = { v ->
-            targetSize = allowedSizes.minByOrNull { abs(it - v.roundToInt()) } ?: targetSize
-          },
-          valueRange = MIN_RESIZE_PX.toFloat()..maxTargetPx.toFloat(),
-          modifier = Modifier.fillMaxWidth(),
-        )
-
-        // Crop toggle only makes sense when the photo isn't already 9:16.
-        if (res != null && !isStoriesAspect(res.first, res.second)) {
-          Spacer(Modifier.height(16.dp))
-          Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-          ) {
-            Column(modifier = Modifier.weight(1f)) {
-              Text(
-                text = stringResource(R.string.resize_crop_option),
-                style = MaterialTheme.typography.bodyLarge,
-              )
-            }
-            Switch(
-              checked = cropForStories,
-              onCheckedChange = { cropForStories = it },
-            )
-          }
-        }
-        Spacer(Modifier.height(24.dp))
-
         Row(
           modifier = Modifier.fillMaxWidth(),
-          horizontalArrangement = Arrangement.spacedBy(12.dp),
+          verticalAlignment = Alignment.CenterVertically,
         ) {
-          Button(
-            onClick = { onContinue(bytes, scale, offset) },
-            modifier = Modifier.weight(1f).height(56.dp),
-            enabled = !working,
-            colors = ButtonDefaults.buttonColors(
-              containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-              contentColor = MaterialTheme.colorScheme.onSurface
-            ),
-            elevation = ButtonDefaults.buttonElevation(defaultElevation = 2.dp)
-          ) {
-            Text(text = stringResource(R.string.resize_skip))
-          }
-          Button(
-            onClick = {
-              resize(targetSize, if (cropForStories) STORIES_ASPECT else null)
-            },
-            modifier = Modifier.weight(1f).height(56.dp),
-            enabled = !working,
-            elevation = ButtonDefaults.buttonElevation(defaultElevation = 4.dp)
-          ) {
+          Column(modifier = Modifier.weight(1f)) {
             Text(
-              text = if (working) {
-                stringResource(R.string.resize_progress)
-              } else {
-                stringResource(R.string.resize_button)
-              },
+              text = stringResource(R.string.resize_crop_option),
+              style = MaterialTheme.typography.bodyLarge,
             )
           }
+          Switch(
+            checked = cropForStories,
+            onCheckedChange = { cropForStories = it },
+          )
         }
-        error?.let {
-          Spacer(Modifier.height(12.dp))
-          Text(it, color = MaterialTheme.colorScheme.error)
+      }
+      Spacer(Modifier.height(24.dp))
+
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+      ) {
+        Button(
+          onClick = { onContinue(bytes, scale, offset) },
+          modifier = Modifier.height(56.dp),
+          enabled = !working,
+          colors = ButtonDefaults.buttonColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+            contentColor = MaterialTheme.colorScheme.onSurface
+          ),
+          elevation = ButtonDefaults.buttonElevation(defaultElevation = 2.dp)
+        ) {
+          Text(text = stringResource(R.string.resize_skip))
+        }
+
+        val resultingDim = remember(resolution, targetSize, cropForStories) {
+          val res = resolution ?: return@remember null
+          val (w, h) = res
+          val aspect = if (cropForStories) STORIES_ASPECT else w.toFloat() / h.toFloat()
+
+          // Width after optional Stories crop
+          val croppedW = if (cropForStories) {
+            val current = w.toFloat() / h
+            if (current > aspect) (h * aspect).roundToInt() else w
+          } else w
+
+          val finalW = min(croppedW, targetSize)
+          val finalH = (finalW / aspect).roundToInt()
+          finalW to finalH
+        }
+
+        Button(
+          onClick = {
+            resize(targetSize, if (cropForStories) STORIES_ASPECT else null)
+          },
+          modifier = Modifier.weight(1f).height(56.dp),
+          enabled = !working,
+          elevation = ButtonDefaults.buttonElevation(defaultElevation = 4.dp)
+        ) {
+          Text(
+            text = if (working) {
+              stringResource(R.string.resize_progress)
+            } else {
+              if (resultingDim != null) {
+                stringResource(R.string.resize_button_to, resultingDim.first, resultingDim.second)
+              } else {
+                stringResource(R.string.resize_button)
+              }
+            },
+          )
         }
       }
     }
   }
+}
 }

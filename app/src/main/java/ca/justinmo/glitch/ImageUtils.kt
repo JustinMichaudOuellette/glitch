@@ -67,8 +67,8 @@ internal fun imageResolution(bytes: ByteArray): Pair<Int, Int>? = runCatching {
   if (swapAxes) bounds.outHeight to bounds.outWidth else bounds.outWidth to bounds.outHeight
 }.getOrNull()
 
-/** Decode, apply EXIF orientation, optionally crop, scale to at most [maxDim] px. */
-internal fun resizeJpeg(bytes: ByteArray, maxDim: Int, cropAspect: Float? = null): ByteArray {
+/** Decode, apply EXIF orientation, optionally crop, scale to at most [targetWidth] px wide. */
+internal fun resizeJpeg(bytes: ByteArray, targetWidth: Int, cropAspect: Float? = null): ByteArray {
   val raw = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
     ?: error("image could not be decoded")
   val oriented = applyExifOrientation(raw, bytes)
@@ -77,7 +77,7 @@ internal fun resizeJpeg(bytes: ByteArray, maxDim: Int, cropAspect: Float? = null
   if (cropped != null && cropped !== oriented) oriented.recycle() // intermediate
   val w = src.width
   val h = src.height
-  val scale = min(1f, maxDim.toFloat() / max(w, h).toFloat())
+  val scale = min(1f, targetWidth.toFloat() / w.toFloat())
   val scaled = if (scale < 1f) {
     Bitmap.createScaledBitmap(src, (w * scale).roundToInt(), (h * scale).roundToInt(), true)
   } else {
@@ -119,25 +119,24 @@ internal fun centeredCropBitmap(bmp: Bitmap, targetAspect: Float): Bitmap {
 
 /**
  * Cheap live preview of the export output: optionally center-crop [src] to
- * [cropAspect], then scale so the long edge is at most [targetLongEdgePx].
+ * [cropAspect], then scale so the width is at most [targetWidthPx].
  * Operates on the already-decoded sample (never re-decodes the file), never
  * upscales, and never recycles [src]. Returns a new bitmap (or [src] itself
  * when no crop and no downscale is needed).
  */
 internal fun previewAtTarget(
   src: Bitmap,
-  targetLongEdgePx: Int,
+  targetWidthPx: Int,
   cropAspect: Float?,
 ): Bitmap {
   val cropped = if (cropAspect != null) centeredCropBitmap(src, cropAspect) else src
   val w = cropped.width
   val h = cropped.height
-  val longEdge = max(w, h)
-  if (longEdge <= targetLongEdgePx) return cropped // already fits - nothing to scale
-  val scale = targetLongEdgePx.toFloat() / longEdge
+  if (w <= targetWidthPx) return cropped // already fits - nothing to scale
+  val scale = targetWidthPx.toFloat() / w
   val scaled = Bitmap.createScaledBitmap(
     cropped,
-    (w * scale).roundToInt().coerceAtLeast(1),
+    targetWidthPx,
     (h * scale).roundToInt().coerceAtLeast(1),
     true,
   )

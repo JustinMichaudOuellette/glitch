@@ -25,6 +25,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -296,11 +298,14 @@ internal fun EditScreen(
   }
 
   Box(modifier = Modifier.fillMaxSize()) {
-    // Current frame (Layer 0: Background zoomable preview)
+    // Current frame (Layer 0: Background zoomable preview). The status bar
+    // inset keeps the top edge of the preview flush against the status bar
+    // instead of running underneath it.
     Box(
       modifier = Modifier
-        .fillMaxSize(),
-      contentAlignment = Alignment.Center,
+        .fillMaxSize()
+        .statusBarsPadding(),
+      contentAlignment = Alignment.TopCenter,
     ) {
       val bmp = bitmap
       if (bmp != null) {
@@ -317,15 +322,19 @@ internal fun EditScreen(
               translationY = offset.y,
             ),
           contentScale = ContentScale.Fit,
+          alignment = Alignment.TopCenter,
           filterQuality = FilterQuality.None,
         )
       } else {
-        CircularProgressIndicator()
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+          CircularProgressIndicator()
+        }
       }
     }
 
     // Controls (Layer 1: Foreground UI)
-    Column(modifier = Modifier.fillMaxSize().safeDrawingPadding()) {
+    Column(modifier = Modifier.fillMaxSize()) {
+      Spacer(modifier = Modifier.statusBarsPadding())
       TitleBar(title = stringResource(R.string.title_glitch), isAboveMedia = true, onBack = onBack)
 
       Column(
@@ -467,6 +476,7 @@ internal fun EditScreen(
       Column(
         modifier = Modifier
           .fillMaxWidth()
+          .navigationBarsPadding()
           .padding(horizontal = 24.dp)
           .padding(top = 16.dp, bottom = 24.dp),
       ) {

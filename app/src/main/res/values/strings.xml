@@ -26,11 +26,11 @@
 
     <!-- Screen 2: resize -->
     <string name="resize_title">Resize</string>
-    <string name="resize_image_meta">%1$s · %2$s · %3$s</string>
     <string name="resize_image_meta_simple">%1$s · %2$s</string>
     <string name="image_resolution">%1$d × %2$d</string>
     <string name="resize_source_desc">Source image</string>
     <string name="resize_button">Resize</string>
+    <string name="resize_button_to">Resize to %1$d × %2$d</string>
     <string name="resize_preset_label">%1$d px</string>
     <string name="resize_progress">Resizing…</string>
     <string name="resize_skip">Skip</string>
