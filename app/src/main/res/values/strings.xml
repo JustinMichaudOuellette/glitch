@@ -1,0 +1,77 @@
+<resources>
+    <string name="app_name">Glitch</string>
+
+    <!-- Shared / common -->
+    <string name="common_back">Back</string>
+    <string name="common_close">Close</string>
+    <string name="title_glitch">Glitch</string>
+
+    <!-- Screen 1: source picker -->
+    <string name="source_tagline">Pick a photo, then corrupt its JPEG bytes.</string>
+    <string name="action_camera">Camera</string>
+    <string name="action_gallery">Gallery</string>
+    <string name="source_loading_image">Loading image…</string>
+    <string name="source_error_decode">Couldn\'t decode that image.</string>
+    <string name="source_error_read_capture">Couldn\'t read the captured photo.</string>
+    <string name="source_error_no_camera_app">No camera app available.</string>
+    <string name="source_error_read_selection">Couldn\'t read the selected image.</string>
+    <string name="image_source_camera">Camera</string>
+    <string name="image_source_gallery">Gallery</string>
+    <string name="image_source_shared">Shared image</string>
+
+    <!-- Shared-image import (GlitchApp) -->
+    <string name="loading_shared_image">Loading shared image…</string>
+    <string name="shared_error_read">Couldn\'t read the shared image.</string>
+    <string name="shared_error_decode">Couldn\'t decode the shared image.</string>
+
+    <!-- Screen 2: resize -->
+    <string name="resize_title">Resize</string>
+    <string name="resize_body">Large photos are slow to glitch (each flip re-decodes the whole file). Shrinking the picture first makes the glitches fast and punchy.</string>
+    <string name="resize_image_meta">%1$s · %2$s · %3$s</string>
+    <string name="resize_image_meta_simple">%1$s · %2$s</string>
+    <string name="image_resolution">%1$d × %2$d</string>
+    <string name="resize_source_desc">Source image</string>
+    <string name="resize_button">Resize</string>
+    <string name="resize_preset_label">%1$d px</string>
+    <string name="resize_progress">Resizing…</string>
+    <string name="resize_skip">Skip</string>
+    <string name="resize_crop_option">Crop to 9:16 (for stories)</string>
+    <string name="resize_error">Resize failed: %1$s</string>
+
+    <!-- Screen 3: glitch editor -->
+    <string name="edit_image_desc">Glitched image</string>
+    <string name="edit_region_chip">%1$s · %2$s</string>
+    <string name="edit_region_stats">%1$s · %2$s · flips: %3$d</string>
+    <string name="edit_undo">Undo</string>
+    <string name="edit_flip_button">Flip bit</string>
+    <string name="edit_glitching">Glitching…</string>
+    <string name="edit_reset">Reset</string>
+    <string name="edit_share">Share</string>
+    <string name="edit_export">Save</string>
+    <string name="edit_saving">Saving…</string>
+    <string name="edit_error_region">No %1$s bytes in this image.</string>
+    <string name="edit_error_decode">Couldn\'t decode this JPEG - go back and pick another image.</string>
+    <string name="edit_error_no_bit">No usable bit found in %1$d tries - image unchanged. Keep pressing or reset.</string>
+    <string name="edit_error_permission">Storage permission is needed to export.</string>
+    <string name="edit_share_chooser">Share glitched JPEG</string>
+    <string name="edit_share_error">Share failed: %1$s</string>
+
+    <!-- Glitch regions (short chip labels + full descriptions) -->
+    <string name="region_code_dqt">DQT</string>
+    <string name="region_code_dht">DHT</string>
+    <string name="region_code_scan">Scan</string>
+    <string name="region_desc_dqt">quantization tables (DQT)</string>
+    <string name="region_desc_dht">Huffman tables (DHT)</string>
+    <string name="region_desc_scan">scan / entropy data</string>
+
+    <!-- Export -->
+    <string name="export_saved_pictures">Saved to Pictures/Glitch/%1$s</string>
+    <string name="export_saved_path">Saved to %1$s</string>
+    <string name="export_create_failed">Export failed (couldn\'t create the file).</string>
+    <string name="export_failed">Export failed: %1$s</string>
+
+    <!-- Byte sizes -->
+    <string name="bytes_b">%1$d B</string>
+    <string name="bytes_kb">%.1f KB</string>
+    <string name="bytes_mb">%.1f MB</string>
+</resources>
