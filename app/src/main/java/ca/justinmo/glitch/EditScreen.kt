@@ -25,7 +25,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -385,7 +384,7 @@ internal fun EditScreenContent(
     modifier = modifier,
     preview = { previewModifier ->
       BoxWithConstraints(
-        modifier = previewModifier.statusBarsPadding(),
+        modifier = previewModifier,
         contentAlignment = Alignment.TopCenter,
       ) {
         val bmp = state.bitmap

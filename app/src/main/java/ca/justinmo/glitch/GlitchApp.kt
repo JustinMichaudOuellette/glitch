@@ -96,25 +96,29 @@ fun GlitchApp(sharedImageUri: Uri? = null) {
           )
         }
         AppMode.Resize -> if (sourceBytes != null) {
-          ResizeScreen(
-            bytes = sourceBytes!!,
-            name = sourceName,
-            onBack = { mode = AppMode.Source },
-            onContinue = { resized, scale, offset ->
-              workingBytes = resized
-              zoomScale = scale
-              zoomOffset = offset
-              mode = AppMode.Edit
-            },
-          )
+          Box(Modifier.safeDrawingPadding()) {
+            ResizeScreen(
+              bytes = sourceBytes!!,
+              name = sourceName,
+              onBack = { mode = AppMode.Source },
+              onContinue = { resized, scale, offset ->
+                workingBytes = resized
+                zoomScale = scale
+                zoomOffset = offset
+                mode = AppMode.Edit
+              },
+            )
+          }
         }
         AppMode.Edit -> if (workingBytes != null) {
-          EditScreen(
-            sourceBytes = workingBytes!!,
-            initialScale = zoomScale,
-            initialOffset = zoomOffset,
-            onBack = { mode = AppMode.Resize },
-          )
+          Box(Modifier.safeDrawingPadding()) {
+            EditScreen(
+              sourceBytes = workingBytes!!,
+              initialScale = zoomScale,
+              initialOffset = zoomOffset,
+              onBack = { mode = AppMode.Resize },
+            )
+          }
         }
       }
     }
