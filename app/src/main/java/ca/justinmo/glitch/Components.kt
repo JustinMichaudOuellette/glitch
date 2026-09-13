@@ -1,5 +1,8 @@
 package ca.justinmo.glitch
 
+import android.graphics.RenderEffect
+import android.graphics.Shader
+import android.os.Build
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -10,6 +13,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -28,6 +32,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.graphics.asComposeRenderEffect
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -59,12 +65,28 @@ internal fun TitleBar(
         onClick = leading,
         modifier = Modifier.align(Alignment.CenterStart),
         colors = IconButtonDefaults.iconButtonColors(
-          containerColor = Color.Black.copy(alpha = 0.4f),
           contentColor = Color.White
         )
       ) {
+        val imageVector = if (onBack != null) Icons.AutoMirrored.Filled.ArrowBack else Icons.Filled.Close
         Icon(
-          imageVector = if (onBack != null) Icons.AutoMirrored.Filled.ArrowBack else Icons.Filled.Close,
+          imageVector = imageVector,
+          contentDescription = null, // Hidden from accessibility
+          tint = shadowColor(),
+          modifier = Modifier
+            .offset(x = 0.dp, y = 1.dp)
+            .graphicsLayer {
+              if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                renderEffect = RenderEffect.createBlurEffect(
+                  4f,
+                  4f,
+                  Shader.TileMode.CLAMP
+                ).asComposeRenderEffect()
+              }
+            }
+        )
+        Icon(
+          imageVector = imageVector,
           contentDescription = if (onBack != null) {
             stringResource(R.string.common_back)
           } else {
@@ -88,10 +110,12 @@ internal fun TitleBar(
 }
 
 internal fun createShadow(): Shadow = Shadow(
-  color = Color.Black.copy(alpha = 0.5f),
+  color = shadowColor(),
   offset = Offset(0f, 2f),
   blurRadius = 4f
 )
+
+internal fun shadowColor(): Color = Color.Black.copy(alpha = 0.5f)
 
 /** Centered full-screen spinner with a caption. */
 @Composable
