@@ -1,10 +1,10 @@
 <resources>
-    <string name="app_name">Glitch</string>
+    <string name="app_name">Bit Glitch</string>
 
     <!-- Shared / common -->
     <string name="common_back">Back</string>
     <string name="common_close">Close</string>
-    <string name="title_glitch">Glitch</string>
+    <string name="title_glitch">Bit Glitch</string>
 
     <!-- Screen 1: source picker -->
     <string name="source_tagline">Pick a photo, then corrupt its JPEG bytes.</string>

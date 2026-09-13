@@ -7,6 +7,7 @@ import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -14,7 +15,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.size
@@ -45,7 +45,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
@@ -199,11 +198,6 @@ internal fun ResizeScreen(
  * with the size / crop controls beneath it. Decoding, cropping and encoding
  * live in [ResizeScreen], so this part can be rendered - and previewed - on
  * its own.
- *
- * The pinch-to-zoom gesture is recognised here, because the transformable
- * modifier has to sit on the preview this function lays out; the zoom/pan it
- * reports goes back to the caller through [onTransform], while the values it
- * draws come from [zoomScale] / [zoomOffset].
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -228,204 +222,282 @@ internal fun ResizeScreenContent(
     onTransform(zoomChange, offsetChange)
   }
 
-  Box(modifier = modifier.fillMaxSize()) {
-    // Current frame (Layer 0: Background zoomable preview). The status bar
-    // inset keeps the top edge of the auto-cropped preview flush against the
-    // status bar instead of running underneath it.
-    Box(
-      modifier = Modifier
-        .fillMaxSize()
-        .statusBarsPadding(),
-      contentAlignment = Alignment.TopCenter,
-    ) {
-      if (preview != null) {
-        Image(
-          bitmap = preview,
-          contentDescription = stringResource(R.string.resize_source_desc),
-          modifier = Modifier
-            .fillMaxSize()
-            .transformable(state = state)
-            .graphicsLayer(
-              scaleX = zoomScale,
-              scaleY = zoomScale,
-              translationX = zoomOffset.x,
-              translationY = zoomOffset.y,
-            ),
-          contentScale = ContentScale.Fit,
-          alignment = Alignment.TopCenter,
-          filterQuality = FilterQuality.None,
-        )
-      } else {
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-          CircularProgressIndicator()
-        }
-      }
-    }
-
-    // Controls (Layer 1: Foreground UI)
-    Column(modifier = Modifier.fillMaxSize()) {
-      Spacer(modifier = Modifier.statusBarsPadding())
-      TitleBar(title = stringResource(R.string.resize_title), onBack = onBack)
-
-      Spacer(modifier = Modifier.weight(1f))
-
-      Column(
-        modifier = Modifier
-          .fillMaxWidth()
-          .navigationBarsPadding()
-          .padding(horizontal = 24.dp)
-          .padding(top = 16.dp, bottom = 24.dp),
+  PreviewWithControls(
+    modifier = modifier,
+    preview = { previewModifier ->
+      BoxWithConstraints(
+        modifier = previewModifier.statusBarsPadding(),
+        contentAlignment = Alignment.TopCenter,
       ) {
-      val res = resolution
+        val bmp = preview
+        val photoHeight = if (bmp != null) maxWidth * (bmp.height.toFloat() / bmp.width.toFloat()) else 0.dp
+        val isCropped = photoHeight > maxHeight
 
-      Spacer(Modifier.height(16.dp))
-
-      // Pick the output width with a seek bar: from 128 px up to
-      // half of the original width (never below 1080 px so it's always
-      // selectable). The bar snaps to a coarse grid anchored at 1080 px;
-      // every stop is a multiple of 8.
-      val widthPx = res?.first
-      val maxTargetPx = (widthPx?.let { half -> max(DEFAULT_RESIZE_PX, half / 2) }
-        ?: DEFAULT_RESIZE_PX).let { (it / 8) * 8 }
-      val allowedSizes = remember(maxTargetPx) {
-        allowedResizeSizes(MIN_RESIZE_PX, maxTargetPx, DEFAULT_RESIZE_PX, RESIZE_STEP_PX)
-      }
-      Text(
-        text = stringResource(R.string.resize_preset_label, targetSize),
-        modifier = Modifier.fillMaxWidth(),
-        style = MaterialTheme.typography.titleMedium.copy(shadow = createShadow()),
-        textAlign = TextAlign.Center,
-      )
-      Slider(
-        value = targetSize.toFloat(),
-        onValueChange = { v ->
-          onTargetSizeChange(allowedSizes.minByOrNull { abs(it - v.roundToInt()) } ?: targetSize)
-        },
-        valueRange = MIN_RESIZE_PX.toFloat()..maxTargetPx.toFloat(),
-        modifier = Modifier.fillMaxWidth(),
-        thumb = {
-          // Apply a shadow specifically to the custom thumb
-          Box(
+        if (bmp != null) {
+          Image(
+            bitmap = bmp,
+            contentDescription = stringResource(R.string.resize_source_desc),
             modifier = Modifier
-              .shadow(elevation = 8.dp, shape = RoundedCornerShape(size = 4.dp))
-              .size(width = 8.dp, height = 48.dp)
-              .clip(RoundedCornerShape(size = 4.dp))
-              .background(MaterialTheme.colorScheme.primary)
+              .fillMaxSize()
+              .transformable(state = state)
+              .graphicsLayer(
+                scaleX = zoomScale,
+                scaleY = zoomScale,
+                translationX = zoomOffset.x,
+                translationY = zoomOffset.y,
+              ),
+            contentScale = if (isCropped) ContentScale.Crop else ContentScale.Fit,
+            alignment = Alignment.TopCenter,
+            filterQuality = FilterQuality.None,
           )
-        },
-        track = { sliderState ->
+        } else {
+          Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator()
+          }
+        }
+
+        Box(modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter)) {
+          TitleBar(title = stringResource(R.string.resize_title), onBack = onBack)
+        }
+
+        // Tall window case
+        if (maxHeight >= TALL_WINDOW_HEIGHT && !isCropped) {
+          // "Rest of controls" -> Aligned to the bottom of the preview
           Box(
             modifier = Modifier
               .fillMaxWidth()
-              .height(16.dp) // Adjust height to match your design
-              .shadow(elevation = 4.dp, shape = RoundedCornerShape(4.dp))
-              .clip(RoundedCornerShape(4.dp))
+              .height(photoHeight)
+              .align(Alignment.TopCenter),
+            contentAlignment = Alignment.BottomCenter
           ) {
-            SliderDefaults.Track(
-              sliderState = sliderState,
-              colors = SliderDefaults.colors()
+             ResizeOverlayContent(
+               resolution = resolution,
+               targetSize = targetSize,
+               cropForStories = cropForStories,
+               onTargetSizeChange = onTargetSizeChange,
+               onCropChange = onCropChange,
+               modifier = Modifier.padding(horizontal = 24.dp).padding(bottom = 12.dp)
+             )
+          }
+
+          // "Last row of buttons" -> Below the preview (centered in gap)
+          val resultingDim = calculateResultingDim(resolution, targetSize, cropForStories)
+          Box(
+            modifier = Modifier
+              .fillMaxWidth()
+              .height(maxHeight - photoHeight)
+              .align(Alignment.BottomCenter),
+            contentAlignment = Alignment.Center
+          ) {
+            ResizeControls(
+              working = working,
+              onSkip = onSkip,
+              onResize = onResize,
+              resultingDim = resultingDim,
+              modifier = Modifier.padding(horizontal = 24.dp)
             )
           }
         }
-      )
+      }
+    },
+    overlay = {
+      BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+        val bmp = preview
+        val photoHeight = if (bmp != null) maxWidth * (bmp.height.toFloat() / bmp.width.toFloat()) else 0.dp
+        val isCropped = photoHeight > maxHeight
 
-      // Crop toggle only makes sense when the photo isn't already 9:16.
-      if (res != null && !isStoriesAspect(res.first, res.second)) {
-        Spacer(Modifier.height(16.dp))
-        Row(
-          modifier = Modifier.fillMaxWidth(),
-          verticalAlignment = Alignment.CenterVertically,
-        ) {
-          Column(modifier = Modifier.weight(1f)) {
-            Text(
-              text = stringResource(R.string.resize_crop_option),
-              style = MaterialTheme.typography.bodyLarge.copy(shadow = createShadow()),
-            )
-          }
-          Switch(
-            checked = cropForStories,
-            onCheckedChange = onCropChange,
-            thumbContent = {
-              Box(
-                modifier = Modifier
-                  .size(SwitchDefaults.IconSize)
-                  .shadow(elevation = 4.dp, shape = CircleShape)
-                  .background(MaterialTheme.colorScheme.surface, CircleShape)
-              )
-            }
+        // Short window or cropped: keep sliders at the bottom edge.
+        if (maxHeight < TALL_WINDOW_HEIGHT || isCropped) {
+          ResizeOverlayContent(
+            resolution = resolution,
+            targetSize = targetSize,
+            cropForStories = cropForStories,
+            onTargetSizeChange = onTargetSizeChange,
+            onCropChange = onCropChange,
+            modifier = Modifier
+              .padding(horizontal = 24.dp)
+              .padding(top = 16.dp)
           )
         }
       }
-      Spacer(Modifier.height(24.dp))
+    },
+    controls = {
+      BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+        val bmp = preview
+        val photoHeight = if (bmp != null) maxWidth * (bmp.height.toFloat() / bmp.width.toFloat()) else 0.dp
+        val isCropped = photoHeight > maxHeight
 
-      Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-      ) {
-        Button(
-          onClick = onSkip,
-          modifier = Modifier.height(56.dp),
-          enabled = !working,
-          colors = ButtonDefaults.buttonColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-            contentColor = MaterialTheme.colorScheme.onSurface
-          ),
-          elevation = ButtonDefaults.buttonElevation(defaultElevation = 2.dp)
-        ) {
-          Text(text = stringResource(R.string.resize_skip))
-        }
-
-        val resultingDim = remember(resolution, targetSize, cropForStories) {
-          val res = resolution ?: return@remember null
-          val (w, h) = res
-          val aspect = if (cropForStories) STORIES_ASPECT else w.toFloat() / h.toFloat()
-
-          // Width after optional Stories crop
-          val croppedW = if (cropForStories) {
-            val current = w.toFloat() / h
-            if (current > aspect) (h * aspect).roundToInt() else w
-          } else w
-
-          val finalW = min(croppedW, targetSize)
-          val finalH = (finalW / aspect).roundToInt()
-          finalW to finalH
-        }
-
-        Button(
-          onClick = onResize,
-          modifier = Modifier.weight(1f).height(56.dp),
-          enabled = !working,
-          elevation = ButtonDefaults.buttonElevation(defaultElevation = 4.dp)
-        ) {
-          Text(
-            text = if (working) {
-              stringResource(R.string.resize_progress)
-            } else {
-              if (resultingDim != null) {
-                stringResource(R.string.resize_button_to, resultingDim.first, resultingDim.second)
-              } else {
-                stringResource(R.string.resize_button)
-              }
-            },
+        // Short window or cropped: keep buttons in their own row at the bottom.
+        if (maxHeight < TALL_WINDOW_HEIGHT || isCropped) {
+          val resultingDim = calculateResultingDim(resolution, targetSize, cropForStories)
+          ResizeControls(
+            working = working,
+            onSkip = onSkip,
+            onResize = onResize,
+            resultingDim = resultingDim,
+            modifier = Modifier
+              .navigationBarsPadding()
+              .padding(horizontal = 24.dp)
+              .padding(top = 16.dp, bottom = 24.dp)
           )
         }
+      }
+    },
+  )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ResizeOverlayContent(
+  resolution: Pair<Int, Int>?,
+  targetSize: Int,
+  cropForStories: Boolean,
+  onTargetSizeChange: (Int) -> Unit,
+  onCropChange: (Boolean) -> Unit,
+  modifier: Modifier = Modifier,
+) {
+  Column(modifier = modifier.fillMaxWidth()) {
+    val res = resolution
+    val widthPx = res?.first
+    val maxTargetPx = (widthPx?.let { half -> max(DEFAULT_RESIZE_PX, half / 2) }
+      ?: DEFAULT_RESIZE_PX).let { (it / 8) * 8 }
+    val allowedSizes = remember(maxTargetPx) {
+      allowedResizeSizes(MIN_RESIZE_PX, maxTargetPx, DEFAULT_RESIZE_PX, RESIZE_STEP_PX)
+    }
+
+    Text(
+      text = stringResource(R.string.resize_preset_label, targetSize),
+      modifier = Modifier.fillMaxWidth(),
+      style = MaterialTheme.typography.titleMedium.copy(shadow = createShadow()),
+      textAlign = TextAlign.Center,
+    )
+    Slider(
+      value = targetSize.toFloat(),
+      onValueChange = { v ->
+        onTargetSizeChange(allowedSizes.minByOrNull { abs(it - v.roundToInt()) } ?: targetSize)
+      },
+      valueRange = MIN_RESIZE_PX.toFloat()..maxTargetPx.toFloat(),
+      modifier = Modifier.fillMaxWidth(),
+      thumb = {
+        Box(
+          modifier = Modifier
+            .shadow(elevation = 8.dp, shape = RoundedCornerShape(size = 4.dp))
+            .size(width = 8.dp, height = 48.dp)
+            .clip(RoundedCornerShape(size = 4.dp))
+            .background(MaterialTheme.colorScheme.primary)
+        )
+      },
+      track = { sliderState ->
+        Box(
+          modifier = Modifier
+            .fillMaxWidth()
+            .height(16.dp)
+            .shadow(elevation = 4.dp, shape = RoundedCornerShape(4.dp))
+            .clip(RoundedCornerShape(4.dp))
+        ) {
+          SliderDefaults.Track(
+            sliderState = sliderState,
+            colors = SliderDefaults.colors()
+          )
+        }
+      }
+    )
+
+    if (res != null && !isStoriesAspect(res.first, res.second)) {
+      Spacer(Modifier.height(16.dp))
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+      ) {
+        Column(modifier = Modifier.weight(1f)) {
+          Text(
+            text = stringResource(R.string.resize_crop_option),
+            style = MaterialTheme.typography.bodyLarge.copy(shadow = createShadow()),
+          )
+        }
+        Switch(
+          checked = cropForStories,
+          onCheckedChange = onCropChange,
+          thumbContent = {
+            Box(
+              modifier = Modifier
+                .size(SwitchDefaults.IconSize)
+                .shadow(elevation = 4.dp, shape = CircleShape)
+                .background(MaterialTheme.colorScheme.surface, CircleShape)
+            )
+          }
+        )
       }
     }
   }
 }
+
+@Composable
+private fun ResizeControls(
+  working: Boolean,
+  onSkip: () -> Unit,
+  onResize: () -> Unit,
+  resultingDim: Pair<Int, Int>?,
+  modifier: Modifier = Modifier,
+) {
+  Row(
+    modifier = modifier.fillMaxWidth(),
+    horizontalArrangement = Arrangement.spacedBy(12.dp),
+    verticalAlignment = Alignment.CenterVertically,
+  ) {
+    Button(
+      onClick = onSkip,
+      modifier = Modifier.height(56.dp),
+      enabled = !working,
+      colors = ButtonDefaults.buttonColors(
+        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+        contentColor = MaterialTheme.colorScheme.onSurface
+      ),
+      elevation = ButtonDefaults.buttonElevation(defaultElevation = 2.dp)
+    ) {
+      Text(text = stringResource(R.string.resize_skip))
+    }
+
+    Button(
+      onClick = onResize,
+      modifier = Modifier.weight(1f).height(56.dp),
+      enabled = !working,
+      elevation = ButtonDefaults.buttonElevation(defaultElevation = 4.dp)
+    ) {
+      Text(
+        text = if (working) {
+          stringResource(R.string.resize_progress)
+        } else {
+          if (resultingDim != null) {
+            stringResource(R.string.resize_button_to, resultingDim.first, resultingDim.second)
+          } else {
+            stringResource(R.string.resize_button)
+          }
+        },
+      )
+    }
+  }
+}
+
+private fun calculateResultingDim(
+  res: Pair<Int, Int>?,
+  targetSize: Int,
+  cropForStories: Boolean
+): Pair<Int, Int>? {
+  if (res == null) return null
+  val (w, h) = res
+  val aspect = if (cropForStories) STORIES_ASPECT else w.toFloat() / h.toFloat()
+  val croppedW = if (cropForStories) {
+    val current = w.toFloat() / h
+    if (current > aspect) (h * aspect).roundToInt() else w
+  } else w
+  val finalW = min(croppedW, targetSize)
+  val finalH = (finalW / aspect).roundToInt()
+  return finalW to finalH
 }
 
 // --- Previews ---------------------------------------------------------------
 
-/**
- * Shared shell for the previews: app theme, dark surface, and the real
- * [ResizeScreenContent] fed with a sample frame and no-op callbacks.
- *
- * [R.drawable.example] is the bundled 1080x1920 9:16 example photo - the same
- * kind of frame the screen hands over once it has decoded and cropped the
- * picked JPEG, so the preview shows the geometry the app really draws.
- */
 @Composable
 private fun ResizeScreenPreviewShell(working: Boolean = false) {
   GlitchTheme {
@@ -450,16 +522,20 @@ private fun ResizeScreenPreviewShell(working: Boolean = false) {
   }
 }
 
-/** Idle state: sample frame, size seek bar, crop toggle and both buttons. */
 @Preview(name = "Resize", device = "spec:width=411dp,height=891dp", showBackground = true)
 @Composable
 private fun ResizeScreenPreview() {
   ResizeScreenPreviewShell(working = false)
 }
 
-/** Working state: the resize button reads "Resizing…" and both buttons disable. */
 @Preview(name = "Resize · working", device = "spec:width=411dp,height=891dp", showBackground = true)
 @Composable
 private fun ResizeScreenWorkingPreview() {
   ResizeScreenPreviewShell(working = true)
+}
+
+@Preview(name = "Resize · small screen", device = "spec:width=320dp,height=568dp", showBackground = true)
+@Composable
+private fun ResizeScreenSmallScreenPreview() {
+  ResizeScreenPreviewShell(working = false)
 }

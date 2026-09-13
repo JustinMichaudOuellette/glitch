@@ -15,6 +15,7 @@ import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -24,7 +25,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.material3.Button
@@ -94,18 +94,12 @@ internal fun EditScreen(
 ) {
   val context = LocalContext.current
   val scope = rememberCoroutineScope()
-  // Two parses: the pristine source (what restart injection starts from, so
-  // re-injecting never compounds) and the current base that flips are applied
-  // to. They differ once restart markers have been injected.
   val sourceStructure = remember(sourceBytes) { JpegParser.parse(sourceBytes) }
   var baseBytes by remember(sourceBytes) { mutableStateOf(sourceBytes) }
   val structure = remember(baseBytes) { JpegParser.parse(baseBytes) }
   var region by remember(sourceBytes) { mutableStateOf(GlitchRegion.SCAN) }
-  // Progressive files expose one knob per scan; see ScanInfo in jpeg/JpegGlitch.kt.
   var scanIndex by remember(sourceBytes) { mutableIntStateOf(0) }
-  // Where the damage should begin, as a fraction of image height.
   var areaFraction by remember(sourceBytes) { mutableFloatStateOf(0.5f) }
-  // How tall each restart window should be, as a fraction of image height.
   var windowFraction by remember(sourceBytes) { mutableFloatStateOf(0.125f) }
   var readout by remember(sourceBytes) { mutableStateOf<String?>(null) }
   var bytes by remember { mutableStateOf(sourceBytes) }
@@ -117,8 +111,6 @@ internal fun EditScreen(
   var exporting by remember { mutableStateOf(false) }
   var error by remember { mutableStateOf<String?>(null) }
 
-  // Pinch-to-zoom state. It stays here (rather than in the content) because
-  // undo, reset and the exported bytes all read the current zoom.
   var scale by remember { mutableFloatStateOf(initialScale) }
   var offset by remember { mutableStateOf(initialOffset) }
 
@@ -130,39 +122,23 @@ internal fun EditScreen(
     if (bmp == null) error = context.getString(R.string.edit_error_decode)
   }
 
-  val geometry: ScanGeometry? = structure.geometryFor(scanIndex)
-
-  /** Why restart injection is unavailable for this file, or null when possible. */
   val injectBlockedReason: String? = JpegRestartInjector.unsupportedReason(sourceStructure)
-  val sourceFrame = sourceStructure.frame
-  val windowInterval: Int =
-    if (sourceFrame != null) {
-      JpegRestartInjector.intervalForWindowFraction(sourceFrame, windowFraction)
-    } else {
-      0
-    }
-  /**
-   * Rewrite the pristine source with restart markers so damage stops at window
-   * edges. Always re-derived from [sourceBytes] rather than the current buffer,
-   * so pressing it twice cannot compound the injection.
-   */
+
   fun injectRestarts() {
     if (injecting || busy) return
     injecting = true
     error = null
-    val interval = windowInterval
-    val source = sourceBytes
-    val parsed = sourceStructure
+    val interval = if (sourceStructure.frame != null) {
+      JpegRestartInjector.intervalForWindowFraction(sourceStructure.frame, windowFraction)
+    } else 0
     scope.launch {
-      // A Huffman transcode of a multi-megapixel scan is far too much work for
-      // the main thread: b.jpg is 376k blocks.
       val result = withContext(Dispatchers.Default) {
-        JpegRestartInjector.inject(source, parsed, interval)
+        JpegRestartInjector.inject(sourceBytes, sourceStructure, interval)
       }
       if (result == null) {
         error = context.getString(
           R.string.edit_window_failed,
-          JpegRestartInjector.unsupportedReason(parsed) ?: "",
+          JpegRestartInjector.unsupportedReason(sourceStructure) ?: "",
         )
         injecting = false
         return@launch
@@ -170,8 +146,6 @@ internal fun EditScreen(
       history = history + bytes
       baseBytes = result.bytes
       bytes = result.bytes
-      // The transcode is lossless, so the decoded picture is unchanged and the
-      // existing bitmap stays valid - no re-decode, no visual flicker.
       readout = context.getString(
         R.string.edit_window_done,
         result.restartCount,
@@ -181,116 +155,74 @@ internal fun EditScreen(
     }
   }
 
-  /**
-   * Bytes the next flip may land in.
-   *
-   * For scan data this is the MCU row the area slider points at: entropy data is
-   * stored MCU by MCU in raster order, so a flip inside that row starts its
-   * damage there.
-   *
-   * Two kinds of byte are always removed:
-   *  - [JpegStructure.fatal] - flipping them can only make the file undecodable.
-   *  - restart markers - they are their own region with their own chip, and
-   *    wrecking one destroys the resync point that bounds the damage.
-   */
-  fun targetSpans(): List<ByteSpan> = when (region) {
-    GlitchRegion.SCAN -> {
-      val geom = geometry
-      val base = if (geom != null) {
-        listOf(geom.byteSpanForRowFraction(areaFraction))
-      } else {
-        structure.scan
-      }
-      // subtract() needs sorted, non-overlapping holes; fatal covers only
-      // DQT/DHT bytes and rst only marker bytes, so they never overlap.
-      ByteSpans.subtract(base, (structure.fatal + structure.rst).sortedBy { it.start })
-    }
-    else -> structure.flippableSpans(region)
-  }
-
   fun flipBit() {
     if (busy || bitmap == null) return
     busy = true
     error = null
-    val rgn = region
-    val spans = targetSpans()
-    val startBytes = bytes
-    val startBmp = bitmap
-    val geom = geometry
+    val currentRegion = region
+    val structureForTarget = structure
+    val currentAreaFraction = areaFraction
+    val currentScanIndex = scanIndex
+    
     scope.launch {
-      if (spans.sumOf { it.size } == 0) {
+      val geom = structureForTarget.geometryFor(currentScanIndex)
+      val targetSpans = when (currentRegion) {
+        GlitchRegion.SCAN -> {
+          val base = if (geom != null) {
+            listOf(geom.byteSpanForRowFraction(currentAreaFraction))
+          } else {
+            structureForTarget.scan
+          }
+          ByteSpans.subtract(base, (structureForTarget.fatal + structureForTarget.rst).sortedBy { it.start })
+        }
+        else -> structureForTarget.flippableSpans(currentRegion)
+      }
+
+      if (targetSpans.sumOf { it.size } == 0) {
         busy = false
-        error = context.getString(
-          R.string.edit_error_region,
-          context.getString(regionCodeRes(rgn)),
-        )
+        error = context.getString(R.string.edit_error_region, context.getString(regionCodeRes(currentRegion)))
         return@launch
       }
-      // Flip bits in the target bytes; roll back flips the JPEG decoder rejects
-      // or that leave the picture pixel-identical, like jpg_glitch.py. Roughly a
-      // third of bytes are no-ops for all 8 of their bits, which is why a single
-      // press may need a few tries to find one that takes effect.
+
       val rng = Random(System.nanoTime())
       var acceptedBytes: ByteArray? = null
       var acceptedBmp: Bitmap? = null
       var acceptedPos = 0
       var acceptedBit = 0
       var attempts = 0
+      val startBytes = bytes
+      val startBmp = bitmap
+
       while (attempts < JpegGlitch.MAX_FLIP_TRIES) {
         attempts++
         val probe = startBytes.copyOf()
-        val flipped = JpegGlitch.flipRandomBit(probe, spans, rng) ?: break
+        val flipped = JpegGlitch.flipRandomBit(probe, targetSpans, rng) ?: break
         val decoded = withContext(Dispatchers.Default) { decodeJpeg(probe) }
-        if (decoded == null) continue // undecodable - roll back, try another bit
-        val visible = startBmp == null || !decoded.sameAs(startBmp)
-        if (!visible) continue // no pixel change - roll back, try another bit
+        if (decoded == null) continue
+        if (startBmp != null && decoded.sameAs(startBmp)) continue
         acceptedBytes = probe
         acceptedBmp = decoded
         acceptedPos = flipped.first
         acceptedBit = flipped.second
         break
       }
-      val newBytes = acceptedBytes
-      val newBmp = acceptedBmp
-      if (newBytes != null) {
+
+      if (acceptedBytes != null) {
         history = history + bytes
-        bytes = newBytes
-        bitmap = newBmp
+        bytes = acceptedBytes
+        bitmap = acceptedBmp
         flips++
-        val retried = if (attempts > 1) {
-          context.getString(R.string.edit_flip_retried, attempts - 1)
-        } else {
-          ""
-        }
+        val retried = if (attempts > 1) context.getString(R.string.edit_flip_retried, attempts - 1) else ""
         readout = if (geom != null) {
           val startRow = (geom.damageStartFraction(acceptedPos) * 100).roundToInt()
-          if (structure.restartInterval > 0) {
-            // With restarts the damage is bounded, so report both edges.
-            val endRow = (geom.damageEndFraction(
-              acceptedPos,
-              structure.restartInterval,
-            ) * 100).roundToInt()
-            context.getString(
-              R.string.edit_flip_readout_band,
-              "0x${acceptedPos.toString(16)}",
-              acceptedBit,
-              startRow,
-              endRow,
-            ) + retried
+          if (structureForTarget.restartInterval > 0) {
+            val endRow = (geom.damageEndFraction(acceptedPos, structureForTarget.restartInterval) * 100).roundToInt()
+            context.getString(R.string.edit_flip_readout_band, "0x${acceptedPos.toString(16)}", acceptedBit, startRow, endRow) + retried
           } else {
-            context.getString(
-              R.string.edit_flip_readout,
-              "0x${acceptedPos.toString(16)}",
-              acceptedBit,
-              startRow,
-            ) + retried
+            context.getString(R.string.edit_flip_readout, "0x${acceptedPos.toString(16)}", acceptedBit, startRow) + retried
           }
         } else {
-          context.getString(
-            R.string.edit_flip_readout_plain,
-            "0x${acceptedPos.toString(16)}",
-            acceptedBit,
-          ) + retried
+          context.getString(R.string.edit_flip_readout_plain, "0x${acceptedPos.toString(16)}", acceptedBit) + retried
         }
       } else {
         error = context.getString(R.string.edit_error_no_bit, attempts)
@@ -303,8 +235,6 @@ internal fun EditScreen(
     if (history.isEmpty() || busy) return
     val prevBytes = history.last()
     history = history.dropLast(1)
-    // Undo can step back across a restart injection, so the base (and therefore
-    // the parsed structure) has to follow the buffer.
     baseBytes = prevBytes
     bytes = prevBytes
     flips--
@@ -333,26 +263,18 @@ internal fun EditScreen(
     }
   }
 
-  // --- Export: save to the gallery ---
   fun doSave() {
-    if (exporting) return
     exporting = true
     scope.launch {
-      val message = withContext(Dispatchers.IO) { saveToGallery(context, bytes) }
+      val msg = withContext(Dispatchers.IO) { saveToGallery(context, bytes) }
       exporting = false
-      toast(message)
+      toast(msg)
     }
   }
 
   val exportPermissionLauncher = rememberLauncherForActivityResult(
-    ActivityResultContracts.RequestPermission(),
-  ) { granted ->
-    if (granted) {
-      doSave()
-    } else {
-      toast(context.getString(R.string.edit_error_permission))
-    }
-  }
+    ActivityResultContracts.RequestPermission()
+  ) { granted -> if (granted) doSave() else toast(context.getString(R.string.edit_error_permission)) }
 
   fun export() {
     if (exporting) return
@@ -366,7 +288,6 @@ internal fun EditScreen(
     }
   }
 
-  // --- Share the current bytes through the system share sheet ---
   fun share() {
     val dir = File(context.cacheDir, "shared").apply { mkdirs() }
     val file = File(dir, "glitch_${timestamp()}.jpg")
@@ -378,22 +299,14 @@ internal fun EditScreen(
         putExtra(Intent.EXTRA_STREAM, uri)
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
       }
-      context.startActivity(
-        Intent.createChooser(send, context.getString(R.string.edit_share_chooser)),
-      )
-    }.onFailure {
-      toast(context.getString(R.string.edit_share_error, it.message))
-    }
+      context.startActivity(Intent.createChooser(send, context.getString(R.string.edit_share_chooser)))
+    }.onFailure { toast(context.getString(R.string.edit_share_error, it.message)) }
   }
-
-  // Everything below is drawn by the stateless EditScreenContent: parsing,
-  // decoding, glitching and exporting stay here, the pixels are theirs.
-  val shownBitmap = remember(bitmap) { bitmap?.asImageBitmap() }
 
   EditScreenContent(
     state = EditUiState(
       structure = structure,
-      bitmap = shownBitmap,
+      bitmap = bitmap?.asImageBitmap(),
       region = region,
       scanIndex = scanIndex,
       areaFraction = areaFraction,
@@ -407,8 +320,6 @@ internal fun EditScreen(
       exporting = exporting,
       zoomScale = scale,
       zoomOffset = offset,
-      // Derived from the pristine source, so it has to be passed in: after a
-      // restart injection `structure` is no longer the file being checked.
       injectBlockedReason = injectBlockedReason,
     ),
     onBack = onBack,
@@ -429,12 +340,9 @@ internal fun EditScreen(
   )
 }
 
-/** Everything [EditScreenContent] draws. */
 @Immutable
 internal data class EditUiState(
-  /** Structure of the buffer the next flip is applied to. */
   val structure: JpegStructure,
-  /** Decoded picture, or null while it is still being decoded. */
   val bitmap: ImageBitmap?,
   val region: GlitchRegion,
   val scanIndex: Int,
@@ -443,25 +351,15 @@ internal data class EditUiState(
   val readout: String?,
   val error: String?,
   val flips: Int,
-  /** True while there is a previous buffer to step back to. */
   val canUndo: Boolean,
   val busy: Boolean,
   val injecting: Boolean,
   val exporting: Boolean,
   val zoomScale: Float,
   val zoomOffset: Offset,
-  /** Why restart injection is unavailable here, or null when it can run. */
   val injectBlockedReason: String?,
 )
 
-/**
- * Stateless body of [EditScreen]: the whole editor UI, driven purely by [state]
- * and the callbacks, so it can be rendered - and previewed - without JPEG
- * bytes, a decoder or a coroutine scope.
- *
- * [state] is unpacked into local vals first, which keeps the layout below
- * identical to the one that used to live inside [EditScreen].
- */
 @Composable
 internal fun EditScreenContent(
   state: EditUiState,
@@ -479,431 +377,344 @@ internal fun EditScreenContent(
   onTransform: (zoomChange: Float, panChange: Offset) -> Unit,
   modifier: Modifier = Modifier,
 ) {
+  val transformState = rememberTransformableState { zoomChange, offsetChange, _ ->
+    onTransform(zoomChange, offsetChange)
+  }
+
+  PreviewWithControls(
+    modifier = modifier,
+    preview = { previewModifier ->
+      BoxWithConstraints(
+        modifier = previewModifier.statusBarsPadding(),
+        contentAlignment = Alignment.TopCenter,
+      ) {
+        val bmp = state.bitmap
+        val photoHeight = if (bmp != null) maxWidth * (bmp.height.toFloat() / bmp.width.toFloat()) else 0.dp
+        val isCropped = photoHeight > maxHeight
+
+        if (bmp != null) {
+          Image(
+            bitmap = bmp,
+            contentDescription = stringResource(R.string.edit_image_desc),
+            modifier = Modifier
+              .fillMaxSize()
+              .transformable(state = transformState)
+              .graphicsLayer(
+                scaleX = state.zoomScale,
+                scaleY = state.zoomScale,
+                translationX = state.zoomOffset.x,
+                translationY = state.zoomOffset.y,
+              ),
+            contentScale = if (isCropped) ContentScale.Crop else ContentScale.Fit,
+            alignment = Alignment.TopCenter,
+            filterQuality = FilterQuality.None,
+          )
+        } else {
+          Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator()
+          }
+        }
+
+        Box(modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter)) {
+          TitleBar(title = stringResource(R.string.title_glitch), onBack = onBack)
+        }
+
+        // Tall window case
+        if (maxHeight >= TALL_WINDOW_HEIGHT && !isCropped) {
+          // "Rest of controls" -> Aligned to the bottom of the preview
+          Box(
+            modifier = Modifier
+              .fillMaxWidth()
+              .height(photoHeight)
+              .align(Alignment.TopCenter),
+            contentAlignment = Alignment.BottomCenter
+          ) {
+            EditOverlayContent(
+              state = state,
+              onRegionChange = onRegionChange,
+              onScanChange = onScanChange,
+              onAreaChange = onAreaChange,
+              onWindowChange = onWindowChange,
+              onInject = onInject,
+              onFlip = onFlip,
+              onUndo = onUndo,
+              modifier = Modifier.padding(horizontal = 24.dp).padding(bottom = 12.dp)
+            )
+          }
+
+          // "Last row of buttons" -> Below the preview (centered in gap)
+          Box(
+            modifier = Modifier
+              .fillMaxWidth()
+              .height(maxHeight - photoHeight)
+              .align(Alignment.BottomCenter),
+            contentAlignment = Alignment.Center
+          ) {
+            EditControls(
+              flips = state.flips,
+              exporting = state.exporting,
+              onReset = onReset,
+              onShare = onShare,
+              onExport = onExport,
+              modifier = Modifier.padding(horizontal = 24.dp)
+            )
+          }
+        }
+      }
+    },
+    overlay = {
+      BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+        val bmp = state.bitmap
+        val photoHeight = if (bmp != null) maxWidth * (bmp.height.toFloat() / bmp.width.toFloat()) else 0.dp
+        val isCropped = photoHeight > maxHeight
+
+        if (maxHeight < TALL_WINDOW_HEIGHT || isCropped) {
+          EditOverlayContent(
+            state = state,
+            onRegionChange = onRegionChange,
+            onScanChange = onScanChange,
+            onAreaChange = onAreaChange,
+            onWindowChange = onWindowChange,
+            onInject = onInject,
+            onFlip = onFlip,
+            onUndo = onUndo,
+            modifier = Modifier.padding(horizontal = 24.dp).padding(top = 8.dp)
+          )
+        }
+      }
+    },
+    controls = {
+      BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+        val bmp = state.bitmap
+        val photoHeight = if (bmp != null) maxWidth * (bmp.height.toFloat() / bmp.width.toFloat()) else 0.dp
+        val isCropped = photoHeight > maxHeight
+
+        if (maxHeight < TALL_WINDOW_HEIGHT || isCropped) {
+          EditControls(
+            flips = state.flips,
+            exporting = state.exporting,
+            onReset = onReset,
+            onShare = onShare,
+            onExport = onExport,
+            modifier = Modifier
+              .navigationBarsPadding()
+              .padding(horizontal = 24.dp)
+              .padding(top = 12.dp, bottom = 24.dp)
+          )
+        }
+      }
+    },
+  )
+}
+
+@Composable
+private fun EditOverlayContent(
+  state: EditUiState,
+  onRegionChange: (GlitchRegion) -> Unit,
+  onScanChange: (Int) -> Unit,
+  onAreaChange: (Float) -> Unit,
+  onWindowChange: (Float) -> Unit,
+  onInject: () -> Unit,
+  onFlip: () -> Unit,
+  onUndo: () -> Unit,
+  modifier: Modifier = Modifier,
+) {
   val structure = state.structure
-  val bitmap = state.bitmap
   val region = state.region
   val scanIndex = state.scanIndex
   val areaFraction = state.areaFraction
   val windowFraction = state.windowFraction
   val readout = state.readout
   val error = state.error
-  val flips = state.flips
   val canUndo = state.canUndo
   val busy = state.busy
   val injecting = state.injecting
-  val exporting = state.exporting
   val injectBlockedReason = state.injectBlockedReason
-  val scale = state.zoomScale
-  val offset = state.zoomOffset
 
-  val geometry: ScanGeometry? = structure.geometryFor(scanIndex)
+  val geometry = structure.geometryFor(scanIndex)
   val componentNames = remember(structure) { componentShortNames(structure.frame) }
   val restartsActive = structure.restartInterval > 0
-  /** Height of one restart window as a percentage of the image. */
-  val activeWindowPercent: Int = geometry?.let { geom ->
+  val activeWindowPercent = geometry?.let { geom ->
     if (geom.unitRows > 0 && geom.unitsPerRow > 0) {
       (structure.restartInterval.toFloat() / geom.unitsPerRow / geom.unitRows * 100f).roundToInt()
-    } else {
-      0
-    }
+    } else 0
   } ?: 0
 
-  val transformState = rememberTransformableState { zoomChange, offsetChange, _ ->
-    onTransform(zoomChange, offsetChange)
-  }
-
-  Box(modifier = modifier.fillMaxSize()) {
-    // Current frame (Layer 0: Background zoomable preview). The status bar
-    // inset keeps the top edge of the preview flush against the status bar
-    // instead of running underneath it.
-    Box(
-      modifier = Modifier
-        .fillMaxSize()
-        .statusBarsPadding(),
-      contentAlignment = Alignment.TopCenter,
+  Column(modifier = modifier.fillMaxWidth()) {
+    Row(
+      modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+      horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-      val bmp = bitmap
-      if (bmp != null) {
-        Image(
-          bitmap = bmp,
-          contentDescription = stringResource(R.string.edit_image_desc),
-          modifier = Modifier
-            .fillMaxSize()
-            .transformable(state = transformState)
-            .graphicsLayer(
-              scaleX = scale,
-              scaleY = scale,
-              translationX = offset.x,
-              translationY = offset.y,
-            ),
-          contentScale = ContentScale.Fit,
-          alignment = Alignment.TopCenter,
-          filterQuality = FilterQuality.None,
+      GlitchRegion.entries.forEach { r ->
+        val total = structure.byteCount(r)
+        val usable = structure.flippableByteCount(r)
+        FilterChip(
+          selected = region == r,
+          enabled = usable > 0,
+          onClick = { onRegionChange(r) },
+          label = { Text(text = regionChipLabel(r, usable, total - usable)) },
+          colors = FilterChipDefaults.filterChipColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+            labelColor = MaterialTheme.colorScheme.onSurface,
+            selectedContainerColor = MaterialTheme.colorScheme.primary,
+            selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+          )
         )
-      } else {
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-          CircularProgressIndicator()
-        }
       }
     }
 
-    // Controls (Layer 1: Foreground UI)
-    Column(modifier = Modifier.fillMaxSize()) {
-      Spacer(modifier = Modifier.statusBarsPadding())
-      TitleBar(title = stringResource(R.string.title_glitch), onBack = onBack)
+    Spacer(Modifier.height(4.dp))
+    Text(
+      text = stringResource(regionDescriptionRes(region)),
+      style = MaterialTheme.typography.bodySmall,
+      color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
 
-      Column(
-        modifier = Modifier
-          .fillMaxWidth()
-          .padding(horizontal = 24.dp)
-          .padding(top = 8.dp),
-      ) {
-        // Region chips (mirrors the 1-4 keys of jpg_glitch.py)
+    if (region == GlitchRegion.SCAN) {
+      if (structure.scans.size > 1) {
+        Spacer(Modifier.height(8.dp))
+        Text(text = stringResource(R.string.edit_scan_section), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(4.dp))
         Row(
           modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
           horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-          GlitchRegion.entries.forEach { r ->
-            val total = structure.byteCount(r)
-            val usable = structure.flippableByteCount(r)
+          structure.scans.forEach { scan ->
             FilterChip(
-              selected = region == r,
-              enabled = usable > 0,
-              onClick = { onRegionChange(r) },
-              label = {
-                Text(text = regionChipLabel(r, usable, total - usable))
-              },
+              selected = scanIndex == scan.index,
+              enabled = scan.byteCount > 0,
+              onClick = { onScanChange(scan.index) },
+              label = { Text(text = stringResource(R.string.edit_scan_chip, scan.index, scanDescriptor(scan, componentNames))) },
               colors = FilterChipDefaults.filterChipColors(
                 containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
                 labelColor = MaterialTheme.colorScheme.onSurface,
-                selectedContainerColor = MaterialTheme.colorScheme.primary,
-                selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+                selectedContainerColor = MaterialTheme.colorScheme.tertiary,
+                selectedLabelColor = MaterialTheme.colorScheme.onTertiary
               )
             )
           }
         }
-
-        // Spell out what the selected chip means: "DQT" alone is cryptic, and
-        // the three regions behave completely differently.
-        Spacer(Modifier.height(4.dp))
-        Text(
-          text = stringResource(regionDescriptionRes(region)),
-          style = MaterialTheme.typography.bodySmall,
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
       }
 
-      // Progressive files hide ~10 semantically different knobs behind the single
-      // "Scan" chip; the DC scan is a global nuke while a DC refinement pass is
-      // invisible. Pick the scan individually, then aim where its damage starts.
-      if (region == GlitchRegion.SCAN) {
-        Column(
-          modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 24.dp),
-        ) {
-          if (structure.scans.size > 1) {
-            Spacer(Modifier.height(8.dp))
-            Text(
-              text = stringResource(R.string.edit_scan_section),
-              style = MaterialTheme.typography.labelMedium,
-              color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(4.dp))
-            Row(
-              modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-              horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-              structure.scans.forEach { scan ->
-                FilterChip(
-                  selected = scanIndex == scan.index,
-                  enabled = scan.byteCount > 0,
-                  onClick = { onScanChange(scan.index) },
-                  label = {
-                    Text(
-                      text = stringResource(
-                        R.string.edit_scan_chip,
-                        scan.index,
-                        scanDescriptor(scan, componentNames),
-                      ),
-                    )
-                  },
-                  colors = FilterChipDefaults.filterChipColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                    labelColor = MaterialTheme.colorScheme.onSurface,
-                    selectedContainerColor = MaterialTheme.colorScheme.tertiary,
-                    selectedLabelColor = MaterialTheme.colorScheme.onTertiary
-                  )
-                )
-              }
-            }
-          }
+      Spacer(Modifier.height(8.dp))
+      Text(text = stringResource(R.string.edit_area_section, (areaFraction * 100).roundToInt()), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+      Slider(value = areaFraction, onValueChange = onAreaChange, valueRange = 0f..1f, colors = SliderDefaults.colors(thumbColor = MaterialTheme.colorScheme.primary, activeTrackColor = MaterialTheme.colorScheme.primary))
+      Text(
+        text = if (geometry != null) stringResource(R.string.edit_area_row, (geometry.unitRowFraction(unitRowFor(geometry, areaFraction)) * geometry.imageHeight).roundToInt(), geometry.imageHeight)
+        else stringResource(R.string.edit_area_no_geometry),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+      )
 
-          Spacer(Modifier.height(8.dp))
-          Text(
-            text = stringResource(
-              R.string.edit_area_section,
-              (areaFraction * 100).roundToInt(),
-            ),
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-          )
-          Slider(
-            value = areaFraction,
-            onValueChange = onAreaChange,
-            valueRange = 0f..1f,
-            colors = SliderDefaults.colors(
-              thumbColor = MaterialTheme.colorScheme.primary,
-              activeTrackColor = MaterialTheme.colorScheme.primary,
-            ),
-          )
-          val geom = geometry
-          Text(
-            text = if (geom != null) {
-              stringResource(
-                R.string.edit_area_row,
-                (geom.unitRowFraction(unitRowFor(geom, areaFraction)) * geom.imageHeight)
-                  .roundToInt(),
-                geom.imageHeight,
-              )
-            } else {
-              stringResource(R.string.edit_area_no_geometry)
-            },
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-          )
-
-          // Bounding: without restart markers the damage always runs to the
-          // bottom of the image, so the area slider can only pick where it
-          // starts. Injecting restart markers gives the decoder a place to
-          // resynchronise, which bounds the damage to one window.
-          Spacer(Modifier.height(12.dp))
-          if (restartsActive) {
-            Text(
-              text = stringResource(R.string.edit_window_active, activeWindowPercent),
-              style = MaterialTheme.typography.bodySmall,
-              color = MaterialTheme.colorScheme.primary,
-            )
-          } else if (injectBlockedReason != null) {
-            Text(
-              text = stringResource(R.string.edit_window_unsupported, injectBlockedReason),
-              style = MaterialTheme.typography.bodySmall,
-              color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-          } else {
-            Text(
-              text = stringResource(
-                R.string.edit_window_section,
-                (windowFraction * 100).roundToInt(),
-              ),
-              style = MaterialTheme.typography.labelMedium,
-              color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Slider(
-              value = windowFraction,
-              onValueChange = onWindowChange,
-              valueRange = 0.02f..0.5f,
-              colors = SliderDefaults.colors(
-                thumbColor = MaterialTheme.colorScheme.tertiary,
-                activeTrackColor = MaterialTheme.colorScheme.tertiary,
-              ),
-            )
-            Button(
-              onClick = onInject,
-              modifier = Modifier.fillMaxWidth().height(44.dp),
-              enabled = !injecting && !busy,
-              colors = ButtonDefaults.buttonColors(
-                containerColor = MaterialTheme.colorScheme.tertiary,
-                contentColor = MaterialTheme.colorScheme.onTertiary,
-                disabledContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-                disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
-              ),
-            ) {
-              Text(
-                text = if (injecting) {
-                  stringResource(R.string.edit_window_working)
-                } else {
-                  stringResource(R.string.edit_window_button)
-                },
-              )
-            }
-          }
-        }
+      Spacer(Modifier.height(12.dp))
+      if (restartsActive) {
+        Text(text = stringResource(R.string.edit_window_active, activeWindowPercent), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+      } else if (injectBlockedReason != null) {
+        Text(text = stringResource(R.string.edit_window_unsupported, injectBlockedReason), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+      } else {
+        Text(text = stringResource(R.string.edit_window_section, (windowFraction * 100).roundToInt()), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Slider(value = windowFraction, onValueChange = onWindowChange, valueRange = 0.02f..0.5f, colors = SliderDefaults.colors(thumbColor = MaterialTheme.colorScheme.tertiary, activeTrackColor = MaterialTheme.colorScheme.tertiary))
+        Button(
+          onClick = onInject,
+          modifier = Modifier.fillMaxWidth().height(44.dp),
+          enabled = !injecting && !busy,
+          colors = ButtonDefaults.buttonColors(
+            containerColor = MaterialTheme.colorScheme.tertiary,
+            contentColor = MaterialTheme.colorScheme.onTertiary,
+            disabledContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+            disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+          ),
+        ) { Text(text = if (injecting) stringResource(R.string.edit_window_working) else stringResource(R.string.edit_window_button)) }
       }
+    }
 
-      val skipped = structure.fatalByteCount(region)
-      if (skipped > 0) {
-        Spacer(Modifier.height(4.dp))
-        Text(
-          text = stringResource(R.string.edit_fatal_note, skipped),
-          modifier = Modifier.padding(horizontal = 24.dp),
-          style = MaterialTheme.typography.bodySmall,
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-      }
+    val skipped = structure.fatalByteCount(region)
+    if (skipped > 0) {
+      Spacer(Modifier.height(4.dp))
+      Text(text = stringResource(R.string.edit_fatal_note, skipped), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
 
-      Spacer(modifier = Modifier.weight(1f))
+    readout?.let {
+      Spacer(Modifier.height(8.dp))
+      Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+    error?.let {
+      Spacer(Modifier.height(8.dp))
+      Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+    }
 
-      Column(
-        modifier = Modifier
-          .fillMaxWidth()
-          .navigationBarsPadding()
-          .padding(horizontal = 24.dp)
-          .padding(top = 16.dp, bottom = 24.dp),
+    Spacer(Modifier.height(12.dp))
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+      Button(
+        onClick = onUndo,
+        modifier = Modifier.weight(1f).height(56.dp),
+        enabled = canUndo,
+        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh, contentColor = MaterialTheme.colorScheme.onSurface),
+        elevation = ButtonDefaults.buttonElevation(defaultElevation = 2.dp, pressedElevation = 8.dp)
+      ) { Text(text = stringResource(R.string.edit_undo)) }
+      Button(
+        onClick = onFlip,
+        modifier = Modifier.weight(1f).height(56.dp),
+        enabled = !busy && state.bitmap != null,
+        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary),
+        elevation = ButtonDefaults.buttonElevation(defaultElevation = 4.dp, pressedElevation = 12.dp)
       ) {
-        readout?.let {
-          Text(
-            it,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-          )
-          Spacer(Modifier.height(4.dp))
-        }
-        error?.let {
-          Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-          Spacer(Modifier.height(8.dp))
-        }
-
-        Row(
-          modifier = Modifier.fillMaxWidth(),
-          horizontalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-          Button(
-            onClick = onUndo,
-            modifier = Modifier.weight(1f).height(56.dp),
-            enabled = canUndo,
-            colors = ButtonDefaults.buttonColors(
-              containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-              contentColor = MaterialTheme.colorScheme.onSurface,
-              disabledContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-              disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
-            ),
-            elevation = ButtonDefaults.buttonElevation(
-              defaultElevation = 2.dp,
-              pressedElevation = 8.dp
-            )
-          ) {
-            Text(text = stringResource(R.string.edit_undo))
-          }
-          Button(
-            onClick = onFlip,
-            modifier = Modifier.weight(1f).height(56.dp),
-            enabled = !busy && bitmap != null,
-            colors = ButtonDefaults.buttonColors(
-              containerColor = MaterialTheme.colorScheme.primary,
-              contentColor = MaterialTheme.colorScheme.onPrimary,
-              disabledContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
-              disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
-            ),
-            elevation = ButtonDefaults.buttonElevation(
-              defaultElevation = 4.dp,
-              pressedElevation = 12.dp,
-              disabledElevation = 0.dp
-            )
-          ) {
-            if (busy) {
-              CircularProgressIndicator(
-                modifier = Modifier.size(22.dp),
-                strokeWidth = 2.dp,
-                color = MaterialTheme.colorScheme.onPrimary,
-              )
-              Spacer(Modifier.size(12.dp))
-              Text(stringResource(R.string.edit_glitching))
-            } else {
-              Text(
-                text = stringResource(R.string.edit_flip_button),
-                style = MaterialTheme.typography.titleMedium,
-              )
-            }
-          }
-        }
-
-        Spacer(Modifier.height(12.dp))
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-          Button(
-            onClick = onReset,
-            modifier = Modifier.weight(1f).height(56.dp),
-            enabled = flips > 0,
-            colors = ButtonDefaults.buttonColors(
-              containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-              contentColor = MaterialTheme.colorScheme.onSurface,
-              disabledContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-              disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
-            ),
-            elevation = ButtonDefaults.buttonElevation(
-              defaultElevation = 2.dp,
-              pressedElevation = 8.dp
-            )
-          ) {
-            Text(stringResource(R.string.edit_reset))
-          }
-          Button(
-            onClick = onShare,
-            modifier = Modifier.weight(1f).height(56.dp),
-            enabled = flips > 0,
-            colors = ButtonDefaults.buttonColors(
-              containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-              contentColor = MaterialTheme.colorScheme.onSurface,
-              disabledContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-              disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
-            ),
-            elevation = ButtonDefaults.buttonElevation(
-              defaultElevation = 2.dp,
-              pressedElevation = 8.dp
-            )
-          ) {
-            Text(stringResource(R.string.edit_share))
-          }
-          Button(
-            onClick = onExport,
-            modifier = Modifier.weight(1f).height(56.dp),
-            enabled = !exporting && flips > 0,
-            colors = ButtonDefaults.buttonColors(
-              containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-              contentColor = MaterialTheme.colorScheme.onSurface,
-              disabledContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-              disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
-            ),
-            elevation = ButtonDefaults.buttonElevation(
-              defaultElevation = 2.dp,
-              pressedElevation = 8.dp
-            )
-          ) {
-            Text(
-              text = if (exporting) {
-                stringResource(R.string.edit_saving)
-              } else {
-                stringResource(R.string.edit_export)
-              },
-            )
-          }
+        if (busy) {
+          CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
+          Spacer(Modifier.size(12.dp))
+          Text(stringResource(R.string.edit_glitching))
+        } else {
+          Text(text = stringResource(R.string.edit_flip_button), style = MaterialTheme.typography.titleMedium)
         }
       }
     }
   }
 }
 
-/** Unit row index the area slider currently points at. */
-private fun unitRowFor(geometry: ScanGeometry, areaFraction: Float): Int {
-  val targetRow = (areaFraction * geometry.imageHeight).toInt()
-  return (targetRow / geometry.rowsPerUnitRow.coerceAtLeast(1))
-    .coerceIn(0, (geometry.unitRows - 1).coerceAtLeast(0))
-}
-
-/** "Y" / "Cb" / "Cr" for each frame component id, in frame-header order. */
-private fun componentShortNames(frame: JpegFrame?): Map<Int, String> {
-  val fallback = listOf("Y", "Cb", "Cr")
-  val components = frame?.components ?: return emptyMap()
-  return components.withIndex().associate { (index, component) ->
-    component.id to (fallback.getOrNull(index) ?: "C${component.id}")
+@Composable
+private fun EditControls(
+  flips: Int,
+  exporting: Boolean,
+  onReset: () -> Unit,
+  onShare: () -> Unit,
+  onExport: () -> Unit,
+  modifier: Modifier = Modifier,
+) {
+  Row(modifier = modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Button(
+      onClick = onReset,
+      modifier = Modifier.weight(1f).height(56.dp),
+      enabled = flips > 0,
+      colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh, contentColor = MaterialTheme.colorScheme.onSurface),
+      elevation = ButtonDefaults.buttonElevation(defaultElevation = 2.dp, pressedElevation = 8.dp)
+    ) { Text(stringResource(R.string.edit_reset)) }
+    Button(
+      onClick = onShare,
+      modifier = Modifier.weight(1f).height(56.dp),
+      enabled = flips > 0,
+      colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh, contentColor = MaterialTheme.colorScheme.onSurface),
+      elevation = ButtonDefaults.buttonElevation(defaultElevation = 2.dp, pressedElevation = 8.dp)
+    ) { Text(stringResource(R.string.edit_share)) }
+    Button(
+      onClick = onExport,
+      modifier = Modifier.weight(1f).height(56.dp),
+      enabled = !exporting && flips > 0,
+      colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh, contentColor = MaterialTheme.colorScheme.onSurface),
+      elevation = ButtonDefaults.buttonElevation(defaultElevation = 2.dp, pressedElevation = 8.dp)
+    ) { Text(text = if (exporting) stringResource(R.string.edit_saving) else stringResource(R.string.edit_export)) }
   }
 }
 
-/**
- * Human description of what a scan encodes: "DC · all", "AC 1-5 · Y",
- * "refine DC · all". In a progressive file these are the real knob labels -
- * the DC scan carries the whole image, an AC band only its frequency range.
- */
+private fun unitRowFor(geometry: ScanGeometry, areaFraction: Float): Int {
+  val targetRow = (areaFraction * geometry.imageHeight).toInt()
+  return (targetRow / geometry.rowsPerUnitRow.coerceAtLeast(1)).coerceIn(0, (geometry.unitRows - 1).coerceAtLeast(0))
+}
+
+private fun componentShortNames(frame: JpegFrame?): Map<Int, String> {
+  val fallback = listOf("Y", "Cb", "Cr")
+  return frame?.components?.withIndex()?.associate { (index, component) -> component.id to (fallback.getOrNull(index) ?: "C${component.id}") } ?: emptyMap()
+}
+
 @Composable
 private fun scanDescriptor(scan: ScanInfo, names: Map<Int, String>): String {
   val spectral = when {
@@ -911,24 +722,11 @@ private fun scanDescriptor(scan: ScanInfo, names: Map<Int, String>): String {
     scan.isDcOnly -> stringResource(R.string.edit_scan_dc)
     else -> stringResource(R.string.edit_scan_ac, scan.ss, scan.se)
   }
-  val prefixed = if (scan.isRefinement) {
-    stringResource(R.string.edit_scan_refine_prefix) + spectral
-  } else {
-    spectral
-  }
-  val components = if (scan.componentCount >= 3) {
-    stringResource(R.string.edit_scan_components_all)
-  } else {
-    scan.componentIds.joinToString("+") { names[it] ?: "C$it" }
-  }
+  val prefixed = if (scan.isRefinement) stringResource(R.string.edit_scan_refine_prefix) + spectral else spectral
+  val components = if (scan.componentCount >= 3) stringResource(R.string.edit_scan_components_all) else scan.componentIds.joinToString("+") { names[it] ?: "C$it" }
   return "$prefixed · $components"
 }
 
-/**
- * Region chip text, showing how much of the region is actually usable. DHT is
- * roughly 16% fatal and 61% no-op, so it should not look like an equal choice
- * next to DQT when ~77% of it can never produce anything worth keeping.
- */
 @Composable
 private fun regionChipLabel(region: GlitchRegion, usable: Int, fatal: Int): String {
   val code = stringResource(regionCodeRes(region))
@@ -936,73 +734,15 @@ private fun regionChipLabel(region: GlitchRegion, usable: Int, fatal: Int): Stri
     usable <= 0 && fatal <= 0 -> stringResource(R.string.edit_region_chip, code, formatBytes(0))
     usable <= 0 -> stringResource(R.string.edit_region_all_fatal, code)
     fatal <= 0 -> stringResource(R.string.edit_region_chip, code, formatBytes(usable))
-    else -> stringResource(
-      R.string.edit_region_chip_some_fatal,
-      code,
-      formatBytes(usable),
-      (fatal * 100) / (usable + fatal),
-    )
+    else -> stringResource(R.string.edit_region_chip_some_fatal, code, formatBytes(usable), (fatal * 100) / (usable + fatal))
   }
 }
 
-// --- Previews ---------------------------------------------------------------
-
-/**
- * Hand-built stand-in for [JpegParser.parse]: a 1080x1920 baseline frame with
- * the usual DQT / DHT / single scan layout. Previews get realistic chip labels,
- * row readouts and fatal-byte notes without shipping a sample JPEG.
- *
- * Geometry matches the frame: 2x2 chroma sampling gives 16x16 px MCUs, so
- * 1080/16 = 68 MCUs per row and 1920/16 = 120 MCU rows.
- */
 private fun previewStructure(restartInterval: Int = 0): JpegStructure {
-  val scan = ScanInfo(
-    index = 0,
-    markerOffset = 622,
-    start = 640,
-    endExclusive = 262_144,
-    components = listOf(
-      ScanComponent(id = 1, dcTable = 0, acTable = 0),
-      ScanComponent(id = 2, dcTable = 1, acTable = 1),
-      ScanComponent(id = 3, dcTable = 1, acTable = 1),
-    ),
-    ss = 0,
-    se = 63,
-    ah = 0,
-    al = 0,
-  )
-  return JpegStructure(
-    dqt = listOf(ByteSpan(20, 150)),
-    dht = listOf(ByteSpan(180, 596)),
-    scan = listOf(ByteSpan(640, 262_144)),
-    rst = emptyList(),
-    scans = listOf(scan),
-    geometry = listOf(
-      ScanGeometry(scan, unitsPerRow = 68, unitRows = 120, rowsPerUnitRow = 16, imageHeight = 1920),
-    ),
-    frame = JpegFrame(
-      width = 1080,
-      height = 1920,
-      precision = 8,
-      progressive = false,
-      components = listOf(
-        ComponentSampling(id = 1, h = 2, v = 2, quantTable = 0),
-        ComponentSampling(id = 2, h = 1, v = 1, quantTable = 1),
-        ComponentSampling(id = 3, h = 1, v = 1, quantTable = 1),
-      ),
-    ),
-    // DQT table spec byte, plus the first DHT table's spec byte and its 16
-    // code-length counts - the bytes a flip can never survive.
-    fatal = listOf(ByteSpan(20, 21), ByteSpan(180, 197)),
-    metadata = emptyList(),
-    restartInterval = restartInterval,
-  )
+  val scan = ScanInfo(0, 622, 640, 262_144, listOf(ScanComponent(1, 0, 0), ScanComponent(2, 1, 1), ScanComponent(3, 1, 1)), 0, 63, 0, 0)
+  return JpegStructure(listOf(ByteSpan(20, 150)), listOf(ByteSpan(180, 596)), listOf(ByteSpan(640, 262_144)), emptyList(), listOf(scan), listOf(ScanGeometry(scan, 68, 120, 16, 1920)), JpegFrame(1080, 1920, 8, false, listOf(ComponentSampling(1, 2, 2, 0), ComponentSampling(2, 1, 1, 1), ComponentSampling(3, 1, 1, 1))), listOf(ByteSpan(20, 21), ByteSpan(180, 197)), emptyList(), emptyList(), restartInterval)
 }
 
-/**
- * Editor state for a preview. The picture is the bundled example photo: the
- * real screen decodes the picked JPEG, which no preview can do.
- */
 @Composable
 private fun previewEditState(
   structure: JpegStructure = previewStructure(),
@@ -1010,91 +750,29 @@ private fun previewEditState(
   readout: String? = null,
   error: String? = null,
   flips: Int = 0,
-  canUndo: Boolean = flips > 0,
-): EditUiState = EditUiState(
-  structure = structure,
-  bitmap = ImageBitmap.imageResource(R.drawable.example),
-  region = region,
-  scanIndex = 0,
-  areaFraction = 0.5f,
-  windowFraction = 0.125f,
-  readout = readout,
-  error = error,
-  flips = flips,
-  canUndo = canUndo,
-  busy = false,
-  injecting = false,
-  exporting = false,
-  zoomScale = 1f,
-  zoomOffset = Offset.Zero,
-  injectBlockedReason = null,
-)
+): EditUiState = EditUiState(structure, ImageBitmap.imageResource(R.drawable.example), region, 0, 0.5f, 0.125f, readout, error, flips, flips > 0, false, false, false, 1f, Offset.Zero, null)
 
-/** Shared shell for the previews: app theme, dark surface, real editor UI. */
 @Composable
 private fun EditScreenPreviewShell(state: EditUiState) {
-  GlitchTheme {
-    Surface(modifier = Modifier.fillMaxSize()) {
-      EditScreenContent(
-        state = state,
-        onBack = {},
-        onRegionChange = {},
-        onScanChange = {},
-        onAreaChange = {},
-        onWindowChange = {},
-        onInject = {},
-        onFlip = {},
-        onUndo = {},
-        onReset = {},
-        onShare = {},
-        onExport = {},
-        onTransform = { _, _ -> },
-      )
-    }
-  }
+  GlitchTheme { Surface(modifier = Modifier.fillMaxSize()) { EditScreenContent(state, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, { _, _ -> }) } }
 }
 
-/** Untouched file: scan chips and both sliders, nothing to undo yet. */
 @Preview(name = "Edit", device = "spec:width=411dp,height=891dp", showBackground = true)
 @Composable
-private fun EditScreenPreview() {
-  EditScreenPreviewShell(previewEditState())
-}
+private fun EditScreenPreview() { EditScreenPreviewShell(previewEditState()) }
 
-/** After a flip: readout line, and undo / reset / share / save light up. */
 @Preview(name = "Edit · glitched", device = "spec:width=411dp,height=891dp", showBackground = true)
 @Composable
-private fun EditScreenGlitchedPreview() {
-  EditScreenPreviewShell(
-    previewEditState(
-      readout = stringResource(R.string.edit_flip_readout, "0x1f3a", 5, 50),
-      flips = 1,
-    ),
-  )
-}
+private fun EditScreenGlitchedPreview() { EditScreenPreviewShell(previewEditState(readout = stringResource(R.string.edit_flip_readout, "0x1f3a", 5, 50), flips = 1)) }
 
-/** Restart markers injected: damage is bounded, so the window control is gone. */
 @Preview(name = "Edit · damage bounded", device = "spec:width=411dp,height=891dp", showBackground = true)
 @Composable
-private fun EditScreenBoundedPreview() {
-  EditScreenPreviewShell(
-    previewEditState(
-      // 2040 of 68x120 MCUs = a 25% tall band.
-      structure = previewStructure(restartInterval = 2040),
-      readout = stringResource(R.string.edit_flip_readout_band, "0x2c81", 2, 50, 62),
-      flips = 3,
-    ),
-  )
-}
+private fun EditScreenBoundedPreview() { EditScreenPreviewShell(previewEditState(structure = previewStructure(2040), readout = stringResource(R.string.edit_flip_readout_band, "0x2c81", 2, 50, 62), flips = 3)) }
 
-/** DHT selected: its own chips, the fatal-byte note, and the failed-flip error. */
 @Preview(name = "Edit · dht region", device = "spec:width=411dp,height=891dp", showBackground = true)
 @Composable
-private fun EditScreenDhtPreview() {
-  EditScreenPreviewShell(
-    previewEditState(
-      region = GlitchRegion.DHT,
-      error = stringResource(R.string.edit_error_no_bit, JpegGlitch.MAX_FLIP_TRIES),
-    ),
-  )
-}
+private fun EditScreenDhtPreview() { EditScreenPreviewShell(previewEditState(region = GlitchRegion.DHT, error = stringResource(R.string.edit_error_no_bit, JpegGlitch.MAX_FLIP_TRIES))) }
+
+@Preview(name = "Edit · small screen", device = "spec:width=320dp,height=568dp", showBackground = true)
+@Composable
+private fun EditScreenSmallScreenPreview() { EditScreenPreviewShell(previewEditState(flips = 1)) }
