@@ -82,6 +82,34 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
+ * Pixel cap (long edge) for the bitmap the editor draws and compares.
+ *
+ * A full-size decode of a 12MP photo is ~48 MB of ARGB_8888, and a flip press
+ * walks up to [JpegGlitch.MAX_FLIP_TRIES] decodes before it finds one that shows
+ * - far more than the heap survives. The picture is only ever displayed (the
+ * exported bytes keep the original resolution), and no phone screen shows more
+ * than a couple of thousand pixels, so the working copy is sampled down. Note
+ * that decoding samples in powers of two, so the result may land somewhat above
+ * this cap (4032 px wide decodes at 2016 px with a cap of 2000).
+ */
+private const val PREVIEW_CAP_PX = 2000
+
+/**
+ * One step of the undo stack.
+ *
+ * A flip changes a single bit, so undoing it needs no copy of the file at all -
+ * storing whole buffers per flip kept megabytes alive for every press and was a
+ * large part of why big photos ran out of memory.
+ */
+private sealed interface UndoStep {
+  /** [bit] of the byte at [position] was flipped; undo by flipping it back. */
+  data class BitFlip(val position: Int, val bit: Int) : UndoStep
+
+  /** The buffer changed wholesale (restart injection): undo by restoring it. */
+  data class Restore(val bytes: ByteArray) : UndoStep
+}
+
+/**
  * Screen 3: flip random bits inside the JPEG byte regions and export the result.
  */
 @Composable
@@ -102,7 +130,7 @@ internal fun EditScreen(
   var windowFraction by remember(sourceBytes) { mutableFloatStateOf(0.125f) }
   var readout by remember(sourceBytes) { mutableStateOf<String?>(null) }
   var bytes by remember { mutableStateOf(sourceBytes) }
-  var history by remember { mutableStateOf(emptyList<ByteArray>()) }
+  var history by remember { mutableStateOf(emptyList<UndoStep>()) }
   var bitmap by remember { mutableStateOf<Bitmap?>(null) }
   var flips by remember { mutableIntStateOf(0) }
   var busy by remember { mutableStateOf(false) }
@@ -116,7 +144,7 @@ internal fun EditScreen(
   fun toast(message: String) = Toast.makeText(context, message, Toast.LENGTH_LONG).show()
 
   LaunchedEffect(Unit) {
-    val bmp = withContext(Dispatchers.Default) { decodeJpeg(sourceBytes) }
+    val bmp = withContext(Dispatchers.Default) { decodeSampled(sourceBytes, PREVIEW_CAP_PX) }
     bitmap = bmp
     if (bmp == null) error = context.getString(R.string.edit_error_decode)
   }
@@ -142,7 +170,7 @@ internal fun EditScreen(
         injecting = false
         return@launch
       }
-      history = history + bytes
+      history = history + UndoStep.Restore(bytes)
       baseBytes = result.bytes
       bytes = result.bytes
       readout = context.getString(
@@ -191,15 +219,24 @@ internal fun EditScreen(
       var attempts = 0
       val startBytes = bytes
       val startBmp = bitmap
+      // One scratch buffer for the whole press: each attempt copies the file
+      // into it and flips a bit in place, so a press allocates no byte arrays
+      // until an attempt is accepted.
+      val probe = ByteArray(startBytes.size)
 
       while (attempts < JpegGlitch.MAX_FLIP_TRIES) {
         attempts++
-        val probe = startBytes.copyOf()
+        startBytes.copyInto(probe)
         val flipped = JpegGlitch.flipRandomBit(probe, targetSpans, rng) ?: break
-        val decoded = withContext(Dispatchers.Default) { decodeJpeg(probe) }
+        val decoded = withContext(Dispatchers.Default) { decodeSampled(probe, PREVIEW_CAP_PX) }
         if (decoded == null) continue
-        if (startBmp != null && decoded.sameAs(startBmp)) continue
-        acceptedBytes = probe
+        if (startBmp != null && decoded.sameAs(startBmp)) {
+          // Rolled back: give its pixels back now instead of leaving them to the
+          // collector, or a run of dead attempts piles up whole frames.
+          decoded.recycle()
+          continue
+        }
+        acceptedBytes = probe.copyOf()
         acceptedBmp = decoded
         acceptedPos = flipped.first
         acceptedBit = flipped.second
@@ -207,7 +244,7 @@ internal fun EditScreen(
       }
 
       if (acceptedBytes != null) {
-        history = history + bytes
+        history = history + UndoStep.BitFlip(acceptedPos, acceptedBit)
         bytes = acceptedBytes
         bitmap = acceptedBmp
         flips++
@@ -232,16 +269,25 @@ internal fun EditScreen(
 
   fun undo() {
     if (history.isEmpty() || busy) return
-    val prevBytes = history.last()
+    val step = history.last()
     history = history.dropLast(1)
-    baseBytes = prevBytes
-    bytes = prevBytes
+    // A flip is one bit, so undoing it costs a single buffer copy; only a
+    // restart injection has to put a whole stored buffer back.
+    val reverted = when (step) {
+      is UndoStep.BitFlip -> bytes.copyOf().also { reverted ->
+        reverted[step.position] =
+          (reverted[step.position].toInt() xor (1 shl step.bit)).toByte()
+      }
+      is UndoStep.Restore -> step.bytes
+    }
+    if (step is UndoStep.Restore) baseBytes = reverted
+    bytes = reverted
     flips--
     error = null
     readout = null
     busy = true
     scope.launch {
-      val bmp = withContext(Dispatchers.Default) { decodeJpeg(prevBytes) }
+      val bmp = withContext(Dispatchers.Default) { decodeSampled(reverted, PREVIEW_CAP_PX) }
       bitmap = bmp
       busy = false
     }
@@ -257,7 +303,7 @@ internal fun EditScreen(
     scale = 1f
     offset = Offset.Zero
     scope.launch {
-      val bmp = withContext(Dispatchers.Default) { decodeJpeg(sourceBytes) }
+      val bmp = withContext(Dispatchers.Default) { decodeSampled(sourceBytes, PREVIEW_CAP_PX) }
       bitmap = bmp
     }
   }
