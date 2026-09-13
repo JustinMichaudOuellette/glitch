@@ -420,14 +420,10 @@ private fun ResizeOverlayContent(
         Switch(
           checked = cropForStories,
           onCheckedChange = onCropChange,
-          thumbContent = {
-            Box(
-              modifier = Modifier
-                .size(SwitchDefaults.IconSize)
-                .shadow(elevation = 4.dp, shape = CircleShape)
-                .background(MaterialTheme.colorScheme.surface, CircleShape)
-            )
-          }
+          colors = SwitchDefaults.colors(
+            checkedThumbColor = MaterialTheme.colorScheme.primary,
+            checkedTrackColor = MaterialTheme.colorScheme.primaryContainer,
+          )
         )
       }
     }
