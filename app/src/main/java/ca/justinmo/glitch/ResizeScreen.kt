@@ -228,11 +228,7 @@ internal fun ResizeScreenContent(
         contentAlignment = Alignment.TopCenter,
       ) {
         val bmp = preview
-        val res = resolution
-        val photoHeight = if (res != null) {
-          val aspect = if (cropForStories) STORIES_ASPECT else res.first.toFloat() / res.second.toFloat()
-          maxWidth / aspect
-        } else 0.dp
+        val photoHeight = maxWidth / STORIES_ASPECT
         val isCropped = photoHeight > maxHeight
 
         if (bmp != null) {
@@ -304,8 +300,7 @@ internal fun ResizeScreenContent(
     },
     overlay = {
       BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-        val bmp = preview
-        val photoHeight = if (bmp != null) maxWidth * (bmp.height.toFloat() / bmp.width.toFloat()) else 0.dp
+        val photoHeight = maxWidth / STORIES_ASPECT
         val isCropped = photoHeight > maxHeight
 
         // Short window or cropped: keep sliders at the bottom edge.
@@ -325,8 +320,7 @@ internal fun ResizeScreenContent(
     },
     controls = {
       BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-        val bmp = preview
-        val photoHeight = if (bmp != null) maxWidth * (bmp.height.toFloat() / bmp.width.toFloat()) else 0.dp
+        val photoHeight = maxWidth / STORIES_ASPECT
         val isCropped = photoHeight > maxHeight
 
         // Short window or cropped: keep buttons in their own row at the bottom.

@@ -388,10 +388,7 @@ internal fun EditScreenContent(
         contentAlignment = Alignment.TopCenter,
       ) {
         val bmp = state.bitmap
-        val frame = state.structure.frame
-        val photoHeight = if (frame != null) {
-          maxWidth / (frame.width.toFloat() / frame.height.toFloat())
-        } else 0.dp
+        val photoHeight = maxWidth / STORIES_ASPECT
         val isCropped = photoHeight > maxHeight
 
         if (bmp != null) {
@@ -466,8 +463,7 @@ internal fun EditScreenContent(
     },
     overlay = {
       BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-        val bmp = state.bitmap
-        val photoHeight = if (bmp != null) maxWidth * (bmp.height.toFloat() / bmp.width.toFloat()) else 0.dp
+        val photoHeight = maxWidth / STORIES_ASPECT
         val isCropped = photoHeight > maxHeight
 
         if (maxHeight < TALL_WINDOW_HEIGHT || isCropped) {
@@ -487,8 +483,7 @@ internal fun EditScreenContent(
     },
     controls = {
       BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-        val bmp = state.bitmap
-        val photoHeight = if (bmp != null) maxWidth * (bmp.height.toFloat() / bmp.width.toFloat()) else 0.dp
+        val photoHeight = maxWidth / STORIES_ASPECT
         val isCropped = photoHeight > maxHeight
 
         if (maxHeight < TALL_WINDOW_HEIGHT || isCropped) {
