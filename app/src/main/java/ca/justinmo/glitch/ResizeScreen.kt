@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.systemGestureExclusion
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -45,6 +46,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
@@ -397,7 +399,11 @@ private fun ResizeOverlayContent(
         onTargetSizeChange(allowedSizes.minByOrNull { abs(it - v.roundToInt()) } ?: targetSize)
       },
       valueRange = MIN_RESIZE_PX.toFloat()..maxTargetPx.toFloat(),
-      modifier = Modifier.fillMaxWidth(),
+      modifier = Modifier.fillMaxWidth()
+        .systemGestureExclusion { layoutCoords ->
+          // Exclude the entire bounding box of the slider plus extra padding if needed
+          Rect(0f, 0f, layoutCoords.size.width.toFloat(), layoutCoords.size.height.toFloat())
+        },
       thumb = {
         Box(
           modifier = Modifier
