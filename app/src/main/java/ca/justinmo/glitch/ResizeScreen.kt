@@ -118,6 +118,7 @@ private fun isStoriesAspect(width: Int, height: Int): Boolean =
 @Composable
 internal fun ResizeScreen(
   bytes: ByteArray,
+  resolution: Pair<Int, Int>,
   name: String,
   onBack: () -> Unit,
   onContinue: (bytes: ByteArray, scale: Float, offset: Offset) -> Unit,
@@ -125,7 +126,7 @@ internal fun ResizeScreen(
   val context = LocalContext.current
   val scope = rememberCoroutineScope()
   var preview by remember(bytes) { mutableStateOf<Bitmap?>(null) }
-  var resolution by remember(bytes) { mutableStateOf<Pair<Int, Int>?>(null) }
+  var currentResolution by remember(bytes) { mutableStateOf(resolution) }
   var cropForStories by remember(bytes) { mutableStateOf(true) }
   var targetSize by remember(bytes) { mutableIntStateOf(DEFAULT_RESIZE_PX) }
   var working by remember { mutableStateOf(false) }
@@ -138,12 +139,10 @@ internal fun ResizeScreen(
   var offset by remember { mutableStateOf(Offset.Zero) }
 
   LaunchedEffect(bytes) {
-    val dims = withContext(Dispatchers.Default) { imageResolution(bytes) }
-    resolution = dims
     // One cached sample large enough for the largest selectable target
     // (half the original long edge), capped for memory.
-    val longEdge = dims?.let { max(it.first, it.second) }
-    val masterDim = (longEdge?.let { max(RESIZE_MAX_DIM, it / 2) } ?: RESIZE_MAX_DIM)
+    val longEdge = max(resolution.first, resolution.second)
+    val masterDim = max(RESIZE_MAX_DIM, longEdge / 2)
       .coerceAtMost(MASTER_PREVIEW_CAP_PX)
     preview = withContext(Dispatchers.Default) { decodeSampled(bytes, maxDim = masterDim) }
   }
@@ -173,7 +172,7 @@ internal fun ResizeScreen(
   // the @Preview functions render.
   ResizeScreenContent(
     preview = displayedPreview?.asImageBitmap(),
-    resolution = resolution,
+    resolution = currentResolution,
     targetSize = targetSize,
     cropForStories = cropForStories,
     working = working,
@@ -229,7 +228,11 @@ internal fun ResizeScreenContent(
         contentAlignment = Alignment.TopCenter,
       ) {
         val bmp = preview
-        val photoHeight = if (bmp != null) maxWidth * (bmp.height.toFloat() / bmp.width.toFloat()) else 0.dp
+        val res = resolution
+        val photoHeight = if (res != null) {
+          val aspect = if (cropForStories) STORIES_ASPECT else res.first.toFloat() / res.second.toFloat()
+          maxWidth / aspect
+        } else 0.dp
         val isCropped = photoHeight > maxHeight
 
         if (bmp != null) {

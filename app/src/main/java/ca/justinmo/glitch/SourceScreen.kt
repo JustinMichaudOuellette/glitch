@@ -70,7 +70,7 @@ private const val SAMPLE_ASSET = "example.webp"
  * [SourceScreenContent].
  */
 @Composable
-internal fun SourceScreen(onPicked: (bytes: ByteArray, name: String) -> Unit) {
+internal fun SourceScreen(onPicked: (bytes: ByteArray, res: Pair<Int, Int>, name: String) -> Unit) {
   val context = LocalContext.current
   val scope = rememberCoroutineScope()
   var busy by remember { mutableStateOf(false) }
@@ -90,21 +90,6 @@ internal fun SourceScreen(onPicked: (bytes: ByteArray, name: String) -> Unit) {
 
   fun toast(message: String) = Toast.makeText(context, message, Toast.LENGTH_LONG).show()
 
-  // Turns arbitrary image bytes into JPEG bytes (PNG etc. are re-encoded).
-  fun accept(raw: ByteArray, name: String) {
-    scope.launch {
-      busy = true
-      error = null
-      val jpeg = withContext(Dispatchers.Default) { toJpegBytes(raw) }
-      busy = false
-      if (jpeg == null) {
-        error = context.getString(R.string.source_error_decode)
-      } else {
-        onPicked(jpeg, name)
-      }
-    }
-  }
-
   // --- Camera capture (writes a JPEG into our cache via FileProvider) ---
   var pendingCapture by remember { mutableStateOf<File?>(null) }
   val cameraLauncher = rememberLauncherForActivityResult(
@@ -117,12 +102,19 @@ internal fun SourceScreen(onPicked: (bytes: ByteArray, name: String) -> Unit) {
         busy = true
         error = null
         val raw = withContext(Dispatchers.IO) { runCatching { file.readBytes() }.getOrNull() }
-        file.delete()
-        busy = false
         if (raw == null) {
+          file.delete()
+          busy = false
           error = context.getString(R.string.source_error_read_capture)
         } else {
-          onPicked(raw, context.getString(R.string.image_source_camera))
+          val res = withContext(Dispatchers.Default) { imageResolution(raw) }
+          file.delete()
+          busy = false
+          if (res == null) {
+            error = context.getString(R.string.source_error_decode)
+          } else {
+            onPicked(raw, res, context.getString(R.string.image_source_camera))
+          }
         }
       }
     }
@@ -150,13 +142,19 @@ internal fun SourceScreen(onPicked: (bytes: ByteArray, name: String) -> Unit) {
         busy = true
         error = null
         val raw = withContext(Dispatchers.IO) { uriToBytes(context, uri) }
-        val name = withContext(Dispatchers.IO) { displayNameOf(context, uri) }
-          ?: context.getString(R.string.image_source_gallery)
-        busy = false
         if (raw == null) {
+          busy = false
           error = context.getString(R.string.source_error_read_selection)
         } else {
-          accept(raw, name)
+          val res = withContext(Dispatchers.Default) { imageResolution(raw) }
+          val name = withContext(Dispatchers.IO) { displayNameOf(context, uri) }
+            ?: context.getString(R.string.image_source_gallery)
+          busy = false
+          if (res == null) {
+            error = context.getString(R.string.source_error_decode)
+          } else {
+            onPicked(raw, res, name)
+          }
         }
       }
     }
@@ -399,7 +397,18 @@ private fun SourceScreenPreviewShell(busy: Boolean, error: String?) {
 @Preview(name = "Source", device = "spec:width=411dp,height=891dp", showBackground = true)
 @Composable
 private fun SourceScreenPreview() {
-  SourceScreenPreviewShell(busy = false, error = null)
+  GlitchTheme {
+    Surface(modifier = Modifier.fillMaxSize()) {
+      SourceScreenContent(
+        busy = false,
+        error = null,
+        onCamera = {},
+        onGallery = {},
+        onClose = {},
+        backdrop = { SampleBackdrop(it) },
+      )
+    }
+  }
 }
 
 /** Loading state shown while an image is being read / re-encoded. */

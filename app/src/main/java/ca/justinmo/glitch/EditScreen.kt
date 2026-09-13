@@ -388,7 +388,10 @@ internal fun EditScreenContent(
         contentAlignment = Alignment.TopCenter,
       ) {
         val bmp = state.bitmap
-        val photoHeight = if (bmp != null) maxWidth * (bmp.height.toFloat() / bmp.width.toFloat()) else 0.dp
+        val frame = state.structure.frame
+        val photoHeight = if (frame != null) {
+          maxWidth / (frame.width.toFloat() / frame.height.toFloat())
+        } else 0.dp
         val isCropped = photoHeight > maxHeight
 
         if (bmp != null) {

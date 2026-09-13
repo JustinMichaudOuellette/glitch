@@ -13,6 +13,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -40,6 +41,7 @@ fun GlitchApp(sharedImageUri: Uri? = null) {
     mutableStateOf(if (sharedImageUri == null) AppMode.Source else AppMode.Loading)
   }
   var sourceBytes by remember { mutableStateOf<ByteArray?>(null) }
+  var sourceResolution by remember { mutableStateOf<Pair<Int, Int>?>(null) }
   var workingBytes by remember { mutableStateOf<ByteArray?>(null) }
   var sourceName by remember { mutableStateOf("image") }
 
@@ -74,9 +76,18 @@ fun GlitchApp(sharedImageUri: Uri? = null) {
       ).show()
       mode = AppMode.Source
     } else {
-      sourceBytes = jpeg
-      sourceName = name
-      mode = AppMode.Resize
+      val res = withContext(Dispatchers.Default) { imageResolution(jpeg) }
+      if (res == null) {
+        Toast.makeText(
+          context, context.getString(R.string.shared_error_decode), Toast.LENGTH_LONG,
+        ).show()
+        mode = AppMode.Source
+      } else {
+        sourceBytes = jpeg
+        sourceResolution = res
+        sourceName = name
+        mode = AppMode.Resize
+      }
     }
   }
 
@@ -88,17 +99,19 @@ fun GlitchApp(sharedImageUri: Uri? = null) {
         }
         AppMode.Source -> Box(Modifier.safeDrawingPadding()) {
           SourceScreen(
-            onPicked = { picked, name ->
+            onPicked = { picked, res, name ->
               sourceBytes = picked
+              sourceResolution = res
               sourceName = name
               mode = AppMode.Resize
             },
           )
         }
-        AppMode.Resize -> if (sourceBytes != null) {
+        AppMode.Resize -> if (sourceBytes != null && sourceResolution != null) {
           Box(Modifier.safeDrawingPadding()) {
             ResizeScreen(
               bytes = sourceBytes!!,
+              resolution = sourceResolution!!,
               name = sourceName,
               onBack = { mode = AppMode.Source },
               onContinue = { resized, scale, offset ->
