@@ -1,6 +1,7 @@
 package ca.justinmo.glitch
 
 import android.graphics.Bitmap
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.rememberTransformableState
@@ -407,6 +408,7 @@ private fun ResizeOverlayContent(
         )
       },
       track = { sliderState ->
+        val trackColors = SliderDefaults.colors()
         Box(
           modifier = Modifier
             .fillMaxWidth()
@@ -416,8 +418,30 @@ private fun ResizeOverlayContent(
         ) {
           SliderDefaults.Track(
             sliderState = sliderState,
-            colors = SliderDefaults.colors()
+            colors = trackColors
           )
+
+          // Dot marking the size most exports use. Material measures the track as
+          // (slider width - thumb width) and places it at thumb width / 2, so the
+          // track spans the thumb's travel exactly and the value maps straight
+          // onto this Box: x = fraction * width. Drawn in the slider's own tick
+          // colour for whichever half of the track it lands in.
+          if (maxTargetPx > DEFAULT_RESIZE_PX) {
+            val dotFraction = (DEFAULT_RESIZE_PX - MIN_RESIZE_PX).toFloat() /
+              (maxTargetPx - MIN_RESIZE_PX).toFloat()
+            val dotColor = if (targetSize >= DEFAULT_RESIZE_PX) {
+              trackColors.activeTickColor
+            } else {
+              trackColors.inactiveTickColor
+            }
+            Canvas(modifier = Modifier.matchParentSize()) {
+              drawCircle(
+                color = dotColor,
+                radius = 2.dp.toPx(),
+                center = Offset(size.width * dotFraction, size.height / 2f),
+              )
+            }
+          }
         }
       }
     )
