@@ -75,8 +75,8 @@ private const val MIN_RESIZE_PX = 128
 private const val MASTER_PREVIEW_CAP_PX = 2400
 
 /**
- * Default / common export size (px). Sizes above it stay available up to
- * half of the original image's long edge.
+ * Default / common export size (px). Sizes above it stay available up to the
+ * original image's own width, so the untouched size can be picked.
  */
 private const val DEFAULT_RESIZE_PX = 1080
 
@@ -113,6 +113,21 @@ private fun isStoriesAspect(width: Int, height: Int): Boolean =
   abs(width.toDouble() / height - STORIES_ASPECT.toDouble()) <= 0.01
 
 /**
+ * True when the chosen size and crop leave the file exactly as it is: the full
+ * width, and no crop left to apply. The button then reads "Keep <w> x <h>" and
+ * the original bytes are handed on instead of being re-encoded at the same size.
+ */
+private fun keepsSource(
+  resolution: Pair<Int, Int>?,
+  targetSize: Int,
+  cropForStories: Boolean,
+): Boolean {
+  val (width, height) = resolution ?: return false
+  if (targetSize < width) return false
+  return !cropForStories || isStoriesAspect(width, height)
+}
+
+/**
  * Screen 2: shrink the JPEG first (faster glitching) or keep it untouched.
  */
 @Composable
@@ -138,8 +153,8 @@ internal fun ResizeScreen(
   var offset by remember { mutableStateOf(Offset.Zero) }
 
   LaunchedEffect(bytes) {
-    // One cached sample large enough for the largest selectable target
-    // (half the original long edge), capped for memory.
+    // One cached sample large enough for the largest selectable target (the
+    // original size), capped for memory.
     val longEdge = max(resolution.first, resolution.second)
     val masterDim = max(RESIZE_MAX_DIM, longEdge / 2)
       .coerceAtMost(MASTER_PREVIEW_CAP_PX)
@@ -185,7 +200,15 @@ internal fun ResizeScreen(
     onCropChange = { cropForStories = it },
     onBack = onBack,
     onSkip = { onContinue(bytes, scale, offset) },
-    onResize = { resize(targetSize, if (cropForStories) STORIES_ASPECT else null) },
+    onResize = {
+      if (keepsSource(resolution, targetSize, cropForStories)) {
+        // The button promised to keep the file: pass the original bytes on
+        // rather than re-encoding an identical frame.
+        onContinue(bytes, scale, offset)
+      } else {
+        resize(targetSize, if (cropForStories) STORIES_ASPECT else null)
+      }
+    },
   )
 }
 
@@ -289,6 +312,7 @@ internal fun ResizeScreenContent(
               onSkip = onSkip,
               onResize = onResize,
               resultingDim = resultingDim,
+              keeping = keepsSource(resolution, targetSize, cropForStories),
               modifier = Modifier.padding(horizontal = 24.dp)
             )
           }
@@ -328,6 +352,7 @@ internal fun ResizeScreenContent(
             onSkip = onSkip,
             onResize = onResize,
             resultingDim = resultingDim,
+            keeping = keepsSource(resolution, targetSize, cropForStories),
             modifier = Modifier
               .navigationBarsPadding()
               .padding(horizontal = 24.dp)
@@ -351,9 +376,10 @@ private fun ResizeOverlayContent(
 ) {
   Column(modifier = modifier.fillMaxWidth()) {
     val res = resolution
-    val widthPx = res?.first
-    val maxTargetPx = (widthPx?.let { half -> max(DEFAULT_RESIZE_PX, half / 2) }
-      ?: DEFAULT_RESIZE_PX).let { (it / 8) * 8 }
+    // The seek bar spans every size from the smallest up to the original width,
+    // so the untouched size is reachable; the stops stay 64px apart on a grid
+    // anchored at DEFAULT_RESIZE_PX and the exact width is always one of them.
+    val maxTargetPx = (res?.first ?: DEFAULT_RESIZE_PX).coerceAtLeast(MIN_RESIZE_PX)
     val allowedSizes = remember(maxTargetPx) {
       allowedResizeSizes(MIN_RESIZE_PX, maxTargetPx, DEFAULT_RESIZE_PX, RESIZE_STEP_PX)
     }
@@ -427,6 +453,7 @@ private fun ResizeControls(
   onSkip: () -> Unit,
   onResize: () -> Unit,
   resultingDim: Pair<Int, Int>?,
+  keeping: Boolean,
   modifier: Modifier = Modifier,
 ) {
   Row(
@@ -454,14 +481,15 @@ private fun ResizeControls(
       elevation = ButtonDefaults.buttonElevation(defaultElevation = 4.dp)
     ) {
       Text(
-        text = if (working) {
-          stringResource(R.string.resize_progress)
-        } else {
-          if (resultingDim != null) {
+        text = when {
+          working -> stringResource(R.string.resize_progress)
+          // Full width with nothing to crop: the button keeps the file as it is,
+          // so it says so - the numbers are the original size.
+          keeping && resultingDim != null ->
+            stringResource(R.string.resize_button_keep, resultingDim.first, resultingDim.second)
+          resultingDim != null ->
             stringResource(R.string.resize_button_to, resultingDim.first, resultingDim.second)
-          } else {
-            stringResource(R.string.resize_button)
-          }
+          else -> stringResource(R.string.resize_button)
         },
       )
     }
@@ -488,14 +516,18 @@ private fun calculateResultingDim(
 // --- Previews ---------------------------------------------------------------
 
 @Composable
-private fun ResizeScreenPreviewShell(working: Boolean = false) {
+private fun ResizeScreenPreviewShell(
+  working: Boolean = false,
+  targetSize: Int = 1080,
+  cropForStories: Boolean = true,
+) {
   GlitchTheme {
     Surface(modifier = Modifier.fillMaxSize()) {
       ResizeScreenContent(
         preview = ImageBitmap.imageResource(R.drawable.example),
         resolution = 4032 to 3024,
-        targetSize = 1080,
-        cropForStories = true,
+        targetSize = targetSize,
+        cropForStories = cropForStories,
         working = working,
         zoomScale = 1f,
         zoomOffset = Offset.Zero,
@@ -526,4 +558,14 @@ private fun ResizeScreenWorkingPreview() {
 @Composable
 private fun ResizeScreenSmallScreenPreview() {
   ResizeScreenPreviewShell(working = false)
+}
+
+/**
+ * Top of the seek bar with the crop off: nothing would change, so the button
+ * reads "Keep 4032 × 3024" and hands the original bytes on.
+ */
+@Preview(name = "Resize · keep original", device = "spec:width=411dp,height=891dp", showBackground = true)
+@Composable
+private fun ResizeScreenKeepPreview() {
+  ResizeScreenPreviewShell(targetSize = 4032, cropForStories = false)
 }
