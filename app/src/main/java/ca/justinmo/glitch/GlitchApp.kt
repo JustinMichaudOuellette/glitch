@@ -40,6 +40,7 @@ fun GlitchApp(sharedImageUri: Uri? = null) {
     mutableStateOf(if (sharedImageUri == null) AppMode.Source else AppMode.Loading)
   }
   var sourceBytes by remember { mutableStateOf<ByteArray?>(null) }
+  var workingBytes by remember { mutableStateOf<ByteArray?>(null) }
   var sourceName by remember { mutableStateOf("image") }
 
   // Shared zoom state
@@ -81,7 +82,6 @@ fun GlitchApp(sharedImageUri: Uri? = null) {
 
   Surface(modifier = Modifier.fillMaxSize()) {
     Box(modifier = Modifier.fillMaxSize()) {
-      val bytes = sourceBytes
       when (mode) {
         AppMode.Loading -> Box(Modifier.safeDrawingPadding()) {
           LoadingScreen(stringResource(R.string.loading_shared_image))
@@ -95,22 +95,22 @@ fun GlitchApp(sharedImageUri: Uri? = null) {
             },
           )
         }
-        AppMode.Resize -> if (bytes != null) {
+        AppMode.Resize -> if (sourceBytes != null) {
           ResizeScreen(
-            bytes = bytes,
+            bytes = sourceBytes!!,
             name = sourceName,
             onBack = { mode = AppMode.Source },
             onContinue = { resized, scale, offset ->
-              sourceBytes = resized
+              workingBytes = resized
               zoomScale = scale
               zoomOffset = offset
               mode = AppMode.Edit
             },
           )
         }
-        AppMode.Edit -> if (bytes != null) {
+        AppMode.Edit -> if (workingBytes != null) {
           EditScreen(
-            sourceBytes = bytes,
+            sourceBytes = workingBytes!!,
             initialScale = zoomScale,
             initialOffset = zoomOffset,
             onBack = { mode = AppMode.Resize },
