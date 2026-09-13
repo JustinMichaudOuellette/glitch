@@ -119,7 +119,6 @@ private fun isStoriesAspect(width: Int, height: Int): Boolean =
 internal fun ResizeScreen(
   bytes: ByteArray,
   resolution: Pair<Int, Int>,
-  name: String,
   onBack: () -> Unit,
   onContinue: (bytes: ByteArray, scale: Float, offset: Offset) -> Unit,
 ) {
@@ -176,7 +175,6 @@ internal fun ResizeScreen(
     targetSize = targetSize,
     cropForStories = cropForStories,
     working = working,
-    error = error,
     zoomScale = scale,
     zoomOffset = offset,
     onTransform = { zoomChange, panChange ->
@@ -205,7 +203,6 @@ internal fun ResizeScreenContent(
   targetSize: Int,
   cropForStories: Boolean,
   working: Boolean,
-  error: String?,
   zoomScale: Float,
   zoomOffset: Offset,
   onTransform: (zoomChange: Float, panChange: Offset) -> Unit,
@@ -500,7 +497,6 @@ private fun ResizeScreenPreviewShell(working: Boolean = false) {
         targetSize = 1080,
         cropForStories = true,
         working = working,
-        error = null,
         zoomScale = 1f,
         zoomOffset = Offset.Zero,
         onTransform = { _, _ -> },

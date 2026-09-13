@@ -112,7 +112,6 @@ fun GlitchApp(sharedImageUri: Uri? = null) {
             ResizeScreen(
               bytes = sourceBytes!!,
               resolution = sourceResolution!!,
-              name = sourceName,
               onBack = { mode = AppMode.Source },
               onContinue = { resized, scale, offset ->
                 workingBytes = resized
