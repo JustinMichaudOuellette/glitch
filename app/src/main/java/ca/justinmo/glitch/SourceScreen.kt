@@ -176,6 +176,7 @@ internal fun SourceScreen(onPicked: (bytes: ByteArray, res: Pair<Int, Int>, name
       )
     },
     onClose = { activity?.finish() },
+    onInfo = { toast(context.getString(R.string.app_name) + " v1.0") },
     backdrop = { contentScale ->
       backdrop?.let { bitmap ->
         Image(
@@ -214,6 +215,7 @@ internal fun SourceScreenContent(
   onGallery: () -> Unit,
   onClose: () -> Unit,
   modifier: Modifier = Modifier,
+  onInfo: (() -> Unit)? = null,
   backdrop: @Composable BoxScope.(contentScale: ContentScale) -> Unit = {},
 ) {
   PreviewWithControls(
@@ -228,7 +230,7 @@ internal fun SourceScreenContent(
 
         // Standard title bar: close (X) on the left, app title centered.
         Box(modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter)) {
-          TitleBar(title = stringResource(R.string.title_glitch), onClose = onClose)
+          TitleBar(title = stringResource(R.string.title_glitch), onClose = onClose, onInfo = onInfo)
         }
 
         // If we have a gap below the image (tall window case), center the buttons there.

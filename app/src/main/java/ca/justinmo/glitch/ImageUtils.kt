@@ -12,6 +12,7 @@ import java.io.ByteArrayOutputStream
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
+import androidx.core.graphics.scale
 
 /** Largest edge (px) that "Resize" scales images down to. */
 internal const val RESIZE_MAX_DIM = 1400
@@ -82,7 +83,7 @@ internal fun resizeJpeg(bytes: ByteArray, targetWidth: Int, cropAspect: Float? =
   val h = src.height
   val scale = min(1f, targetWidth.toFloat() / w.toFloat())
   val scaled = if (scale < 1f) {
-    Bitmap.createScaledBitmap(src, (w * scale).roundToInt(), (h * scale).roundToInt(), true)
+    src.scale((w * scale).roundToInt(), (h * scale).roundToInt())
   } else {
     src
   }
@@ -137,12 +138,7 @@ internal fun previewAtTarget(
   val h = cropped.height
   if (w <= targetWidthPx) return cropped // already fits - nothing to scale
   val scale = targetWidthPx.toFloat() / w
-  val scaled = Bitmap.createScaledBitmap(
-    cropped,
-    targetWidthPx,
-    (h * scale).roundToInt().coerceAtLeast(1),
-    true,
-  )
+  val scaled = cropped.scale(targetWidthPx, (h * scale).roundToInt().coerceAtLeast(1))
   if (scaled !== cropped && cropped !== src) cropped.recycle() // intermediate crop is disposable
   return scaled
 }

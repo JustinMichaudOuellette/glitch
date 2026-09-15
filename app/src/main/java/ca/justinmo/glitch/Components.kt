@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -28,18 +29,21 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Shadow
 import ca.justinmo.glitch.jpeg.GlitchRegion
 import ca.justinmo.glitch.ui.theme.GlitchTheme
 
@@ -53,6 +57,7 @@ internal fun TitleBar(
   title: String,
   onBack: (() -> Unit)? = null,
   onClose: (() -> Unit)? = null,
+  onInfo: (() -> Unit)? = null,
 ) {
   Box(
     modifier = Modifier
@@ -69,30 +74,7 @@ internal fun TitleBar(
         )
       ) {
         val imageVector = if (onBack != null) Icons.AutoMirrored.Filled.ArrowBack else Icons.Filled.Close
-        Icon(
-          imageVector = imageVector,
-          contentDescription = null, // Hidden from accessibility
-          tint = shadowColor(),
-          modifier = Modifier
-            .offset(x = 0.dp, y = 1.dp)
-            .graphicsLayer {
-              if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                renderEffect = RenderEffect.createBlurEffect(
-                  4f,
-                  4f,
-                  Shader.TileMode.CLAMP
-                ).asComposeRenderEffect()
-              }
-            }
-        )
-        Icon(
-          imageVector = imageVector,
-          contentDescription = if (onBack != null) {
-            stringResource(R.string.common_back)
-          } else {
-            stringResource(R.string.common_close)
-          },
-        )
+        ShadowedIcon(imageVector = imageVector, contentDescription = if (onBack != null) stringResource(R.string.common_back) else stringResource(R.string.common_close))
       }
     }
     Text(
@@ -105,6 +87,47 @@ internal fun TitleBar(
       fontWeight = FontWeight.Bold,
       maxLines = 1,
       overflow = TextOverflow.Ellipsis,
+    )
+    if (onInfo != null) {
+      IconButton(
+        onClick = onInfo,
+        modifier = Modifier.align(Alignment.CenterEnd),
+        colors = IconButtonDefaults.iconButtonColors(
+          contentColor = Color.White
+        )
+      ) {
+        ShadowedIcon(imageVector = Icons.Default.Info, contentDescription = stringResource(R.string.common_info))
+      }
+    }
+  }
+}
+
+@Composable
+private fun ShadowedIcon(
+  imageVector: ImageVector,
+  contentDescription: String?,
+  modifier: Modifier = Modifier,
+) {
+  Box(modifier = modifier) {
+    Icon(
+      imageVector = imageVector,
+      contentDescription = null, // Hidden from accessibility
+      tint = shadowColor(),
+      modifier = Modifier
+        .offset(x = 0.dp, y = 1.dp)
+        .graphicsLayer {
+          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            renderEffect = RenderEffect.createBlurEffect(
+              4f,
+              4f,
+              Shader.TileMode.CLAMP
+            ).asComposeRenderEffect()
+          }
+        }
+    )
+    Icon(
+      imageVector = imageVector,
+      contentDescription = contentDescription,
     )
   }
 }
