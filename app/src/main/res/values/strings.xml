@@ -39,7 +39,63 @@
     <string name="resize_crop_option">Crop to 9:16 (for stories)</string>
     <string name="resize_error">Resize failed: %1$s</string>
 
-    <!-- Screen 3: glitch editor -->
+    <!-- Screen 3: quantization tables (DQT) -->
+    <string name="dqt_title">Quantization Table</string>
+    <string name="dqt_preview_desc">Preview of the quantization edit</string>
+    <string name="dqt_edited_summary">%1$d quantizer byte(s) changed - the preview shows the result</string>
+    <string name="dqt_skip">Skip</string>
+    <string name="dqt_next">Next</string>
+    <string name="dqt_next_edited">Next (%1$d changed)</string>
+    <string name="dqt_reset">Reset all</string>
+
+    <!-- Pattern tiles -->
+    <string name="dqt_family_brightness">Brightness</string>
+    <string name="dqt_family_saturation">Saturation</string>
+    <string name="dqt_family_horizontal">Horizontal</string>
+    <string name="dqt_family_horizontal_color">Horizontal color</string>
+    <string name="dqt_family_vertical">Vertical</string>
+    <string name="dqt_family_vertical_color">Vertical color</string>
+    <string name="dqt_family_checkered">Checkered</string>
+    <string name="dqt_family_checkered_color">Checkered color</string>
+    <string name="dqt_family_counts">%1$d quantizers - %2$d changed</string>
+    <string name="dqt_family_missing">not in this file</string>
+
+    <string name="dqt_blurb_brightness">Moves the average of every 8x8 block: the picture gets brighter or darker.</string>
+    <string name="dqt_blurb_saturation">Moves the average colour of every block: colours pull apart or wash together.</string>
+    <string name="dqt_blurb_horizontal">Horizontal bands across every block.</string>
+    <string name="dqt_blurb_horizontal_color">Horizontal bands, in colour only (chroma table).</string>
+    <string name="dqt_blurb_vertical">Vertical bands across every block.</string>
+    <string name="dqt_blurb_vertical_color">Vertical bands, in colour only (chroma table).</string>
+    <string name="dqt_blurb_checkered">Squares in both directions: a checkerboard when u equals v, a plaid when they differ.</string>
+    <string name="dqt_blurb_checkered_color">Squares in both directions, in colour only (chroma table).</string>
+
+    <!-- Bit sheet -->
+    <string name="dqt_sheet_counts">%1$d quantizers in the %2$s table</string>
+    <string name="dqt_table_luma">luma</string>
+    <string name="dqt_table_chroma">chroma</string>
+    <string name="dqt_sheet_reset">Reset this pattern</string>
+    <string name="dqt_sheet_hint">Fine patterns need detail in the photo: on a smooth image the finest rows change nothing.</string>
+    <string name="dqt_section_dc">Block average - moves the whole picture</string>
+    <string name="dqt_section_bands">%1$s - %2$s bands</string>
+    <string name="dqt_section_cells">%1$s - %2$s cells</string>
+    <string name="dqt_scale_coarsest">Coarsest</string>
+    <string name="dqt_scale_coarse">Coarse</string>
+    <string name="dqt_scale_medium">Medium</string>
+    <string name="dqt_scale_fine">Fine</string>
+    <string name="dqt_scale_subpixel">Sub-pixel</string>
+
+    <string name="dqt_row_coeff">coeff %1$d - u%2$d v%3$d</string>
+    <string name="dqt_row_value">%1$d</string>
+    <string name="dqt_row_value_edited">%1$d to %2$d</string>
+    <string name="dqt_row_reset">reset</string>
+    <string name="dqt_row_tap_hint">tap a bit to change this quantizer</string>
+    <string name="dqt_bit_label">b%1$d</string>
+    <string name="dqt_dir_coarser">coarser: that frequency is quantized harder, so it rings</string>
+    <string name="dqt_dir_finer">finer: that frequency is stored more accurately</string>
+    <string name="dqt_dir_zero">zero: that frequency is thrown away</string>
+    <string name="dqt_dir_same">unchanged</string>
+
+    <!-- Screen 4: glitch editor -->
     <string name="edit_image_desc">Glitched image</string>
     <string name="edit_undo">Undo</string>
     <string name="edit_flip_button">Flip bit</string>

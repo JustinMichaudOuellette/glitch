@@ -21,13 +21,14 @@ import androidx.compose.ui.res.stringResource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-private enum class AppMode { Loading, Source, Resize, Edit }
+private enum class AppMode { Loading, Source, Resize, Dqt, Edit }
 
 /**
- * Three-step flow:
+ * Four-step flow:
  *  1. [SourceScreen] - pick a photo (camera or gallery)
  *  2. [ResizeScreen] - resize the JPEG or keep it as-is
- *  3. [EditScreen] - flip bits in the JPEG bytes and export the result
+ *  3. [DqtScreen] - optionally retune the quantization tables (the DQT bytes)
+ *  4. [EditScreen] - flip bits in the JPEG bytes and export the result
  *
  * When [sharedImageUri] is set (another app shared an image into us via
  * ACTION_SEND), the picker step is skipped: the image is loaded and the
@@ -48,11 +49,17 @@ fun GlitchApp(sharedImageUri: Uri? = null) {
   var zoomScale by remember { mutableFloatStateOf(1f) }
   var zoomOffset by remember { mutableStateOf(Offset.Zero) }
 
-  // OS back navigation walks up the screen stack: Edit -> Resize -> Source.
-  // On the Source screen (and while a shared image is still loading) the
-  // default behaviour applies, which finishes the activity.
-  BackHandler(enabled = mode == AppMode.Edit || mode == AppMode.Resize) {
-    mode = if (mode == AppMode.Edit) AppMode.Resize else AppMode.Source
+  // OS back navigation walks up the screen stack: Edit -> Dqt -> Resize ->
+  // Source. On the Source screen (and while a shared image is still loading)
+  // the default behaviour applies, which finishes the activity.
+  BackHandler(
+    enabled = mode == AppMode.Edit || mode == AppMode.Dqt || mode == AppMode.Resize,
+  ) {
+    mode = when (mode) {
+      AppMode.Edit -> AppMode.Dqt
+      AppMode.Dqt -> AppMode.Resize
+      else -> AppMode.Source
+    }
   }
 
   // Load an image shared from another app (works for JPEG, PNG, HEIC, ...).
@@ -116,6 +123,22 @@ fun GlitchApp(sharedImageUri: Uri? = null) {
                 workingBytes = resized
                 zoomScale = scale
                 zoomOffset = offset
+                mode = AppMode.Dqt
+              },
+            )
+          }
+        }
+        AppMode.Dqt -> if (workingBytes != null) {
+          Box(Modifier.safeDrawingPadding()) {
+            DqtScreen(
+              bytes = workingBytes!!,
+              initialScale = zoomScale,
+              initialOffset = zoomOffset,
+              onBack = { mode = AppMode.Resize },
+              onContinue = { adjusted, scale, offset ->
+                workingBytes = adjusted
+                zoomScale = scale
+                zoomOffset = offset
                 mode = AppMode.Edit
               },
             )
@@ -127,7 +150,7 @@ fun GlitchApp(sharedImageUri: Uri? = null) {
               sourceBytes = workingBytes!!,
               initialScale = zoomScale,
               initialOffset = zoomOffset,
-              onBack = { mode = AppMode.Resize },
+              onBack = { mode = AppMode.Dqt },
             )
           }
         }
