@@ -1,6 +1,7 @@
 package ca.justinmo.glitch
 
 import android.graphics.Bitmap
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -148,6 +149,7 @@ internal fun ResizeScreen(
   var targetSize by remember(bytes) { mutableIntStateOf(DEFAULT_RESIZE_PX) }
   var working by remember { mutableStateOf(false) }
   var error by remember { mutableStateOf<String?>(null) }
+  var showInfo by remember { mutableStateOf(false) }
 
   // Pinch-to-zoom state. The gesture itself is recognised by the content (it
   // owns the modifier that needs the layout), so this is only the zoom/pan it
@@ -187,32 +189,43 @@ internal fun ResizeScreen(
   // Decoding, the zoom gesture and the encode stay here; the whole visible
   // layout is drawn by the stateless ResizeScreenContent below, which is what
   // the @Preview functions render.
-  ResizeScreenContent(
-    preview = displayedPreview?.asImageBitmap(),
-    resolution = currentResolution,
-    targetSize = targetSize,
-    cropForStories = cropForStories,
-    working = working,
-    zoomScale = scale,
-    zoomOffset = offset,
-    onTransform = { zoomChange, panChange ->
-      scale = (scale * zoomChange).coerceIn(0.5f, 5f)
-      offset += panChange
-    },
-    onTargetSizeChange = { targetSize = it },
-    onCropChange = { cropForStories = it },
-    onBack = onBack,
-    onSkip = { onContinue(bytes, scale, offset) },
-    onResize = {
-      if (keepsSource(resolution, targetSize, cropForStories)) {
-        // The button promised to keep the file: pass the original bytes on
-        // rather than re-encoding an identical frame.
-        onContinue(bytes, scale, offset)
-      } else {
-        resize(targetSize, if (cropForStories) STORIES_ASPECT else null)
-      }
-    },
-  )
+  // Back closes the explanation before it leaves the screen.
+  BackHandler(enabled = showInfo) { showInfo = false }
+
+  Box(modifier = Modifier.fillMaxSize()) {
+    ResizeScreenContent(
+      preview = displayedPreview?.asImageBitmap(),
+      resolution = currentResolution,
+      targetSize = targetSize,
+      cropForStories = cropForStories,
+      working = working,
+      zoomScale = scale,
+      zoomOffset = offset,
+      onTransform = { zoomChange, panChange ->
+        scale = (scale * zoomChange).coerceIn(0.5f, 5f)
+        offset += panChange
+      },
+      onTargetSizeChange = { targetSize = it },
+      onCropChange = { cropForStories = it },
+      onBack = onBack,
+      onInfo = { showInfo = true },
+      onSkip = { onContinue(bytes, scale, offset) },
+      onResize = {
+        if (keepsSource(resolution, targetSize, cropForStories)) {
+          // The button promised to keep the file: pass the original bytes on
+          // rather than re-encoding an identical frame.
+          onContinue(bytes, scale, offset)
+        } else {
+          resize(targetSize, if (cropForStories) STORIES_ASPECT else null)
+        }
+      },
+    )
+
+    // Drawn last, over the screen, so the explanation costs no resize state.
+    if (showInfo) {
+      ResizeInfoScreen(onClose = { showInfo = false })
+    }
+  }
 }
 
 /**
@@ -235,6 +248,7 @@ internal fun ResizeScreenContent(
   onTargetSizeChange: (Int) -> Unit,
   onCropChange: (Boolean) -> Unit,
   onBack: () -> Unit,
+  onInfo: () -> Unit,
   onSkip: () -> Unit,
   onResize: () -> Unit,
   modifier: Modifier = Modifier,
@@ -278,7 +292,11 @@ internal fun ResizeScreenContent(
         }
 
         Box(modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter)) {
-          TitleBar(title = stringResource(R.string.resize_title), onBack = onBack)
+          TitleBar(
+            title = stringResource(R.string.resize_title),
+            onBack = onBack,
+            onInfo = onInfo,
+          )
         }
 
         // Tall window case
@@ -565,6 +583,7 @@ private fun ResizeScreenPreviewShell(
         onTargetSizeChange = {},
         onCropChange = {},
         onBack = {},
+        onInfo = {},
         onSkip = {},
         onResize = {},
       )

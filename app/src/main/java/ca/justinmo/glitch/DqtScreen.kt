@@ -1,6 +1,13 @@
 package ca.justinmo.glitch
 
+import android.content.res.ColorStateList
 import android.graphics.Bitmap
+import android.view.ContextThemeWrapper
+import android.view.View
+import android.view.ViewGroup
+import android.widget.EditText
+import android.widget.ImageView
+import android.widget.NumberPicker
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
@@ -37,6 +44,8 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.ArrowDropUp
 import androidx.compose.material.icons.filled.Contrast
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Refresh
@@ -57,6 +66,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -68,6 +78,7 @@ import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
@@ -77,11 +88,15 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalInspectionMode
+import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.res.imageResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.res.vectorResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -89,6 +104,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
 import ca.justinmo.glitch.jpeg.ByteSpan
 import ca.justinmo.glitch.jpeg.JpegParser
 import ca.justinmo.glitch.jpeg.JpegStructure
@@ -314,6 +330,7 @@ internal fun DqtScreen(
   // so everything else in the file stays exactly as it was.
   var edits by remember(bytes) { mutableStateOf<Map<Int, Int>>(emptyMap()) }
   var openFamily by remember(bytes) { mutableStateOf<DqtFamily?>(null) }
+  var showInfo by remember(bytes) { mutableStateOf(false) }
   var preview by remember(bytes) { mutableStateOf<Bitmap?>(null) }
 
   // Zoom, starting where the resize screen left it and handed on to the editor,
@@ -342,8 +359,10 @@ internal fun DqtScreen(
     preview = withContext(Dispatchers.Default) { decodeSampled(applied, DQT_PREVIEW_CAP_PX) }
   }
 
-  // Back closes the open pattern first, then the screen.
+  // Back closes what is on top first: the explanation, then the open pattern,
+  // then the screen.
   BackHandler(enabled = openFamily != null) { openFamily = null }
+  BackHandler(enabled = showInfo) { showInfo = false }
 
   val transform: (Float, Offset) -> Unit = { zoomChange, panChange ->
     scale = (scale * zoomChange).coerceIn(0.5f, 5f)
@@ -354,22 +373,29 @@ internal fun DqtScreen(
     modifier = Modifier
       .fillMaxSize()
       .onGloballyPositioned { screenBoundsInRoot = it.boundsInRoot() }
-      .dqtTransformGestures(
-        // Read through the state holders, so the bounds are current whenever a
-        // gesture arrives (this lambda is captured once, the values are not).
-        previewBoundsProvider = {
-          val screen = screenBoundsInRoot
-          val preview = previewBoundsInRoot
-          if (screen == null || preview == null) null
-          else preview.translate(-screen.topLeft)
+      // While the explanation is up, its scroller owns every gesture.
+      .then(
+        if (showInfo) {
+          Modifier
+        } else {
+          Modifier.dqtTransformGestures(
+            // Read through the state holders, so the bounds are current whenever
+            // a gesture arrives (this lambda is captured once, the values are not).
+            previewBoundsProvider = {
+              val screen = screenBoundsInRoot
+              val preview = previewBoundsInRoot
+              if (screen == null || preview == null) null
+              else preview.translate(-screen.topLeft)
+            },
+            panelBoundsProvider = {
+              val screen = screenBoundsInRoot
+              val panel = panelBoundsInRoot
+              if (screen == null || panel == null) null
+              else panel.translate(-screen.topLeft)
+            },
+            onTransform = transform,
+          )
         },
-        panelBoundsProvider = {
-          val screen = screenBoundsInRoot
-          val panel = panelBoundsInRoot
-          if (screen == null || panel == null) null
-          else panel.translate(-screen.topLeft)
-        },
-        onTransform = transform,
       ),
   ) {
     DqtScreenContent(
@@ -380,6 +406,7 @@ internal fun DqtScreen(
       zoomOffset = offset,
       onPreviewBounds = { previewBoundsInRoot = it },
       onBack = onBack,
+      onInfo = { showInfo = true },
       // Set the shown family with the open one, so the panel is created on the
       // tapped family rather than reusing the page it was left on.
       onOpenFamily = { family ->
@@ -422,6 +449,11 @@ internal fun DqtScreen(
         )
       }
     }
+
+    // Drawn last, so the explanation covers the panel and the pattern row.
+    if (showInfo) {
+      DqtInfoScreen(onClose = { showInfo = false })
+    }
   }
 }
 
@@ -440,6 +472,7 @@ internal fun DqtScreenContent(
   zoomOffset: Offset,
   onPreviewBounds: (Rect) -> Unit,
   onBack: () -> Unit,
+  onInfo: () -> Unit,
   onOpenFamily: (DqtFamily) -> Unit,
   onSkip: () -> Unit,
   onNext: () -> Unit,
@@ -478,7 +511,11 @@ internal fun DqtScreenContent(
         }
 
         Box(modifier = Modifier.fillMaxWidth()) {
-          TitleBar(title = stringResource(R.string.dqt_title), onBack = onBack)
+          TitleBar(
+            title = stringResource(R.string.dqt_title),
+            onBack = onBack,
+            onInfo = onInfo,
+          )
         }
 
         if (roomBelow) {
@@ -632,11 +669,7 @@ private fun DqtActionsRow(
       elevation = ButtonDefaults.buttonElevation(defaultElevation = 4.dp),
     ) {
       Text(
-        text = if (edits.isEmpty()) {
-          stringResource(R.string.dqt_next)
-        } else {
-          stringResource(R.string.dqt_next_edited, edits.size)
-        },
+        text = stringResource(R.string.dqt_next),
         maxLines = 1,
       )
     }
@@ -644,7 +677,7 @@ private fun DqtActionsRow(
 }
 
 @Composable
-private fun familyIcon(family: DqtFamily): ImageVector = when (family.axis) {
+internal fun familyIcon(family: DqtFamily): ImageVector = when (family.axis) {
   QuantAxis.DC -> if (family.chroma) Icons.Filled.Contrast else Icons.Filled.LightMode
   QuantAxis.HORIZONTAL -> if (family.chroma) ImageVector.vectorResource(R.drawable.horizontal_color) else ImageVector.vectorResource(R.drawable.horizontal)
   QuantAxis.VERTICAL -> if (family.chroma) ImageVector.vectorResource(R.drawable.vertical_color) else ImageVector.vectorResource(R.drawable.vertical)
@@ -960,14 +993,20 @@ private fun DqtFamilyPage(
           )
         }
       }
-      if (family.axis != QuantAxis.DC) {
-        Text(
-          text = stringResource(R.string.dqt_sheet_hint),
-          style = MaterialTheme.typography.labelSmall,
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-      }
-      TextButton(onClick = { onResetFamily(family) }) {
+      Text(
+        // The DC families have no pattern to hint at; they get told how the
+        // wheel works instead.
+        text = stringResource(
+          if (family.axis == QuantAxis.DC) R.string.dqt_sheet_hint_dc else R.string.dqt_sheet_hint
+        ),
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+      )
+      TextButton(
+        onClick = { onResetFamily(family) },
+        // Nothing to undo until one of this pattern's quantizers has been moved.
+        enabled = entries.any { edits.containsKey(it.offset) },
+      ) {
         Icon(
           imageVector = Icons.Filled.Refresh,
           contentDescription = null,
@@ -1019,13 +1058,20 @@ private fun DqtFamilyPage(
 }
 
 /**
- * One quantizer in a single row: a short label, a slider over every value the
- * byte can hold (0-255 for the usual 8-bit table), the value it is set to, and a
- * reset button once it differs from the file.
+ * One quantizer in a single row: a control over every value the byte can hold
+ * (0-255 for the usual 8-bit table) and the value it is set to.
  *
- * Dragging right makes the quantizer coarser - that frequency is stored more
- * roughly and rings harder - and dragging to 0 deletes it outright, which is why
- * the value turns red there.
+ * Most families get a slider, plus a reset button once the quantizer differs from
+ * the file: a whole pattern of coefficients is adjusted by feel, and dragging
+ * along the row moves a lot of them quickly. The DC families - brightness and
+ * saturation - get a [NumberPicker] instead, because there the table holds one
+ * number that *is* the effect, so exact single steps beat a coarse drag. Those
+ * rows have no reset button: one number is the whole family, so the panel's
+ * "Reset this pattern" is already exactly that undo.
+ *
+ * Dragging right (or stepping up) makes the quantizer coarser - that frequency is
+ * stored more roughly and rings harder - and a value of 0 deletes it outright,
+ * which is why the value turns red there.
  */
 @Composable
 private fun QuantizerRow(
@@ -1036,57 +1082,240 @@ private fun QuantizerRow(
   onReset: () -> Unit,
 ) {
   val maxValue = (1 shl entry.bitCount) - 1
+  val isDc = entry.axis == QuantAxis.DC
+  // Zero and "changed" mean the same in every row: a quantizer at zero drops that
+  // frequency entirely, a changed one is flagged with the accent. Both controls
+  // use the same three colours, so a slider row and a picker row read alike.
+  val valueColor = when {
+    value == 0 -> MaterialTheme.colorScheme.error
+    edited -> MaterialTheme.colorScheme.primary
+    else -> MaterialTheme.colorScheme.onSurfaceVariant
+  }
+  // The picker's field shows only the digits, so name the quantizer in words for
+  // screen readers and for the preview, where the wheel is not drawn at all.
+  val pickerLabel = if (LocalInspectionMode.current) {
+    "block average, value $value"
+  } else {
+    stringResource(R.string.dqt_row_picker_label, value)
+  }
   Row(
     modifier = Modifier
       .fillMaxWidth()
       .padding(top = 2.dp, bottom = 2.dp),
     verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(8.dp),
+    // The picker is the only thing in its row, so it sits in the middle rather
+    // than hugging the edge the reset button used to hold down.
+    horizontalArrangement = if (isDc) Arrangement.Center else Arrangement.spacedBy(8.dp),
   ) {
-    Slider(
-      value = value.toFloat(),
-      onValueChange = { onValueChange(it.roundToInt().coerceIn(0, maxValue)) },
-      valueRange = 0f..maxValue.toFloat(),
-      modifier = Modifier.weight(1f).padding(start = 16.dp),
-      colors = SliderDefaults.colors(
-        thumbColor = MaterialTheme.colorScheme.primary,
-        activeTrackColor = MaterialTheme.colorScheme.primary,
-      ),
-    )
-
-    Text(
-      text = value.toString(),
-      style = MaterialTheme.typography.labelMedium,
-      fontFamily = FontFamily.Monospace,
-      textAlign = TextAlign.End,
-      // Wide enough for a 16-bit table's five digits.
-      modifier = Modifier.width(32.dp),
-      maxLines = 1,
-      color = when {
-        value == 0 -> MaterialTheme.colorScheme.error
-        edited -> MaterialTheme.colorScheme.primary
-        else -> MaterialTheme.colorScheme.onSurfaceVariant
-      },
-    )
-
-    if (edited) {
-      IconButton(onClick = onReset, modifier = Modifier.size(48.dp)) {
-        Icon(
-          imageVector = Icons.Filled.Refresh,
-          // Use LocalInspectionMode to provide a fallback string during Compose Previews
-          // to bypass any potential out-of-sync layoutlib/Preview cache NoSuchFieldError issues.
-          contentDescription = if (LocalInspectionMode.current) {
-            "reset to ${entry.value}"
-          } else {
-            stringResource(R.string.dqt_row_reset_to, entry.value)
-          },
-        )
-      }
+    if (isDc) {
+      NumberPickerCell(
+        value = value,
+        maxValue = maxValue,
+        textColor = valueColor,
+        onValueChange = onValueChange,
+        modifier = Modifier.semantics {
+          // The wheel only announces "5"; say which quantizer that is.
+          contentDescription = pickerLabel
+        },
+      )
     } else {
-      // Same footprint as the button, so the sliders stay lined up.
-      Spacer(Modifier.size(48.dp))
+      Slider(
+        value = value.toFloat(),
+        onValueChange = { onValueChange(it.roundToInt().coerceIn(0, maxValue)) },
+        valueRange = 0f..maxValue.toFloat(),
+        modifier = Modifier.weight(1f).padding(start = 16.dp),
+        colors = SliderDefaults.colors(
+          thumbColor = MaterialTheme.colorScheme.primary,
+          activeTrackColor = MaterialTheme.colorScheme.primary,
+        ),
+      )
+
+      Text(
+        text = value.toString(),
+        style = MaterialTheme.typography.labelMedium,
+        fontFamily = FontFamily.Monospace,
+        textAlign = TextAlign.End,
+        // Wide enough for a 16-bit table's five digits.
+        modifier = Modifier.width(32.dp),
+        maxLines = 1,
+        color = valueColor,
+      )
+
+      if (edited) {
+        IconButton(onClick = onReset, modifier = Modifier.size(48.dp)) {
+          Icon(
+            imageVector = Icons.Filled.Refresh,
+            // Use LocalInspectionMode to provide a fallback string during Compose Previews
+            // to bypass any potential out-of-sync layoutlib/Preview cache NoSuchFieldError issues.
+            contentDescription = if (LocalInspectionMode.current) {
+              "reset to ${entry.value}"
+            } else {
+              stringResource(R.string.dqt_row_reset_to, entry.value)
+            },
+          )
+        }
+      } else {
+        // Same footprint as the button, so the sliders stay lined up.
+        Spacer(Modifier.size(48.dp))
+      }
     }
   }
+}
+
+/** A wheel needs a fixed box; [NumberPicker] has no intrinsic size in Compose. */
+private val NUMBER_PICKER_WIDTH = 96.dp
+private val NUMBER_PICKER_HEIGHT = 112.dp
+
+/**
+ * The platform number picker, wrapped for Compose.
+ *
+ * Compose ships no equivalent, so this is an [AndroidView] around
+ * [android.widget.NumberPicker]: a wheel of the values the byte can hold with
+ * +1/-1 steppers beside it. A drag on the wheel turns the wheel rather than
+ * scrolling the list under it, and the number field is blocked from focus, so no
+ * soft keyboard rises over the panel.
+ *
+ * It is built with [R.style.Theme_Glitch_NumberPicker] rather than the app's own
+ * theme: the widget colours itself from the Android theme it is inflated with, and
+ * the app's is a light one (Compose paints the black surface itself), which would
+ * leave it drawing black numbers and arrows onto black. Only the selected number
+ * is recoloured from Compose, for the changed and zeroed states.
+ *
+ * Draws nothing in a Compose preview: `AndroidView` needs a real Android context,
+ * so the previews show a stand-in of the wheel instead.
+ */
+@Composable
+private fun NumberPickerCell(
+  value: Int,
+  maxValue: Int,
+  textColor: Color,
+  onValueChange: (Int) -> Unit,
+  modifier: Modifier = Modifier,
+) {
+  // The view is built once and lives on across recompositions, so the callback it
+  // was wired to would go stale without this.
+  val currentOnValueChange by rememberUpdatedState(onValueChange)
+  val argb = textColor.toArgb()
+  // Bound outside the builder: inside it the parameter names would be shadowed by
+  // NumberPicker's own `value` and `maxValue` properties, and the assignments
+  // below would quietly read back the widget's fields instead.
+  val top = maxValue
+  val initial = value.coerceIn(0, top)
+  val context = LocalContext.current
+  val pickerContext = remember(context) {
+    ContextThemeWrapper(context, R.style.Theme_Glitch_NumberPicker)
+  }
+
+  if (LocalInspectionMode.current) {
+    // AndroidView renders nothing in a preview and the picker needs a real
+    // context, so previews get a stand-in laid out like the widget: the selected
+    // value in the middle, the values either side of it above and below in the
+    // colour the widget's own wheel uses, and the two steppers at the right edge.
+    // Same box, so nothing else in the panel shifts when the real wheel appears.
+    val wheelColor = colorResource(R.color.number_picker_text)
+    Box(
+      modifier = Modifier.width(NUMBER_PICKER_WIDTH).height(NUMBER_PICKER_HEIGHT),
+      contentAlignment = Alignment.Center,
+    ) {
+      Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        // Above the selected value come the larger ones, as on the wheel. Blank at
+        // the ends, where the wheel stops instead of wrapping.
+        Text(
+          text = if (value < top) (value + 1).toString() else "",
+          style = MaterialTheme.typography.bodyLarge,
+          color = wheelColor,
+          maxLines = 1,
+        )
+        Text(
+          text = value.toString(),
+          style = MaterialTheme.typography.bodyLarge,
+          color = textColor,
+          maxLines = 1,
+        )
+        Text(
+          text = if (value > 0) (value - 1).toString() else "",
+          style = MaterialTheme.typography.bodyLarge,
+          color = wheelColor,
+          maxLines = 1,
+        )
+      }
+      Column(
+        modifier = Modifier.align(Alignment.CenterEnd),
+        horizontalAlignment = Alignment.CenterHorizontally,
+      ) {
+        Icon(
+          imageVector = Icons.Filled.ArrowDropUp,
+          contentDescription = null,
+          tint = textColor,
+          modifier = Modifier.size(20.dp),
+        )
+        Icon(
+          imageVector = Icons.Filled.ArrowDropDown,
+          contentDescription = null,
+          tint = textColor,
+          modifier = Modifier.size(20.dp),
+        )
+      }
+    }
+    return
+  }
+
+  AndroidView(
+    factory = {
+      NumberPicker(pickerContext).apply {
+        // maxValue has to be in place before value, or the setter clamps it.
+        // Both are named like the parameters of this composable, so they are
+        // addressed through the receiver.
+        minValue = 0
+        this.maxValue = top
+        this.value = initial
+        // No wrapping: a value that jumps from 255 back to 0 would be a
+        // catastrophic edit made by accident.
+        wrapSelectorWheel = false
+        setFormatter { it.toString() }
+        // Keep the inner text field out of the way: no caret, no soft keyboard
+        // rising over the panel. The wheel and buttons still work.
+        descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
+        tintPicker(this, argb)
+        setOnValueChangedListener { _, _, newValue -> currentOnValueChange(newValue) }
+      }
+    },
+    update = { picker ->
+      // The wheel takes its colour from the theme it was built with; the selected
+      // number follows the row's state instead.
+      tintPicker(picker, argb)
+      if (picker.maxValue != top) picker.maxValue = top
+      if (picker.value != value) picker.value = value.coerceIn(0, top)
+    },
+    onRelease = { picker -> picker.setOnValueChangedListener(null) },
+    modifier = modifier.width(NUMBER_PICKER_WIDTH).height(NUMBER_PICKER_HEIGHT),
+  )
+}
+
+/**
+ * Recolours the number field and the steppers of [NumberPicker].
+ *
+ * The wheel itself cannot be reached from here - the colour of the values around
+ * the selected one is set once from the theme and has no setter - which is why the
+ * widget is built with a theme that already draws them light.
+ */
+private fun tintPicker(picker: NumberPicker, textColor: Int) {
+  fun walk(view: View) {
+    when (view) {
+      is EditText -> {
+        view.setTextColor(textColor)
+        // The field paints its own selection box; the wheel draws the numbers.
+        view.background = null
+        view.isFocusable = false
+        view.isFocusableInTouchMode = false
+      }
+
+      is ImageView -> view.imageTintList = ColorStateList.valueOf(textColor)
+      is ViewGroup -> for (i in 0 until view.childCount) walk(view.getChildAt(i))
+      else -> Unit
+    }
+  }
+  walk(picker)
 }
 
 // --- Previews ---------------------------------------------------------------
@@ -1138,6 +1367,7 @@ private fun DqtScreenPreviewShell(edits: Map<Int, Int>) {
         zoomOffset = Offset.Zero,
         onPreviewBounds = {},
         onBack = {},
+        onInfo = {},
         onOpenFamily = {},
         onSkip = {},
         onNext = {},
@@ -1218,13 +1448,14 @@ private fun DqtBitsPanelCheckeredPreview() {
   )
 }
 
-@Preview(name = "DQT panel - saturation", device = "spec:width=411dp,height=891dp", showBackground = true)
+@Preview(name = "DQT panel - nothing changed", device = "spec:width=411dp,height=891dp", showBackground = true)
 @Composable
-private fun DqtBitsPanelDcPreview() {
-  // Chroma DC (table 1, coefficient 0) - the single-row case.
+private fun DqtBitsPanelUnchangedPreview() {
+  // Chroma DC (table 1, coefficient 0) - the single-row case, and nothing edited
+  // yet, so "Reset this pattern" shows disabled.
   DqtBitsPanelPreviewShell(
     family = DqtFamily(QuantAxis.DC, chroma = true,),
-    edits = mapOf(66 to 40),
+    edits = emptyMap(),
   )
 }
 
@@ -1256,5 +1487,66 @@ private fun DqtBitsPanelSmallPreview() {
   DqtBitsPanelPreviewShell(
     family = DqtFamily(QuantAxis.HORIZONTAL, chroma = false,),
     edits = mapOf(3 to 19),
+  )
+}
+
+@Preview(name = "DQT panel - picker changed", device = "spec:width=411dp,height=891dp", showBackground = true)
+@Composable
+private fun DqtBitsPanelPickerPreview() {
+  // Luma DC (table 0, coefficient 0, offset 1) raised from 3 to 8: the picker
+  // should show its changed colour and "Reset this pattern" should light up.
+  DqtBitsPanelPreviewShell(
+    family = DqtFamily(QuantAxis.DC, chroma = false,),
+    edits = mapOf(1 to 8),
+  )
+}
+
+/**
+ * The quantizer rows on their own, where the two controls can be compared at a
+ * size that shows their colours: the picker at rest, changed and zeroed - the
+ * three states every row shares - each with the faded neighbours the wheel draws
+ * around the selected value; then slider rows, which are the only ones that carry
+ * a reset button.
+ */
+@Preview(name = "DQT quantizer rows", device = "spec:width=411dp,height=891dp", showBackground = true)
+@Composable
+private fun DqtQuantizerRowsPreview() {
+  val luma = previewTables().first()
+  val dc = luma.entries.first()
+  val cells = luma.entriesFor(QuantAxis.CHECKERED).filter { maxOf(it.u, it.v) == 2 }
+  val band = cells.first()
+  GlitchTheme {
+    Surface(modifier = Modifier.fillMaxSize()) {
+      Column(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+      ) {
+        QuantizerRowLabel(stringResource(R.string.dqt_section_dc))
+        QuantizerRow(dc, value = dc.value, edited = false, onValueChange = {}, onReset = {})
+        QuantizerRow(dc, value = dc.value + 2, edited = true, onValueChange = {}, onReset = {})
+        QuantizerRow(dc, value = 0, edited = true, onValueChange = {}, onReset = {})
+
+        QuantizerRowLabel(
+          stringResource(
+            R.string.dqt_section_cells,
+            stringResource(scaleWordRes(2)),
+            sizeText(cells),
+          )
+        )
+        QuantizerRow(band, value = band.value, edited = false, onValueChange = {}, onReset = {})
+        QuantizerRow(band, value = band.value + 40, edited = true, onValueChange = {}, onReset = {})
+      }
+    }
+  }
+}
+
+/** The section heading the panel puts above a group of rows. */
+@Composable
+private fun QuantizerRowLabel(text: String) {
+  Text(
+    text = text,
+    style = MaterialTheme.typography.labelLarge,
+    color = MaterialTheme.colorScheme.primary,
+    modifier = Modifier.padding(start = 16.dp, end = 16.dp),
   )
 }

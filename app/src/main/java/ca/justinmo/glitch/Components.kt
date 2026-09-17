@@ -15,6 +15,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
@@ -234,6 +236,59 @@ internal fun formatBytes(count: Int): String = when {
   count >= 1_000_000 -> stringResource(R.string.bytes_mb, count / 1_000_000f)
   count >= 1_000 -> stringResource(R.string.bytes_kb, count / 1_000f)
   else -> stringResource(R.string.bytes_b, count)
+}
+
+/**
+ * One titled block of an explanation screen: a heading, a paragraph, and an
+ * optional illustration underneath.
+ */
+@Composable
+internal fun InfoSection(
+  title: String,
+  body: String,
+  content: @Composable () -> Unit = {},
+) {
+  Spacer(Modifier.height(22.dp))
+  Text(
+    text = title,
+    style = MaterialTheme.typography.titleMedium,
+    fontWeight = FontWeight.Bold,
+    color = MaterialTheme.colorScheme.onSurface,
+  )
+  Spacer(Modifier.height(4.dp))
+  Text(
+    text = body,
+    style = MaterialTheme.typography.bodyMedium,
+    color = MaterialTheme.colorScheme.onSurfaceVariant,
+  )
+  content()
+}
+
+/**
+ * Full-screen explanation drawn over a screen: title bar plus a scrolling body.
+ *
+ * It is a plain composable in the same window as the screen underneath, not a
+ * separate destination, so opening it never costs that screen its state.
+ */
+@Composable
+internal fun InfoScreen(
+  title: String,
+  onClose: () -> Unit,
+  modifier: Modifier = Modifier,
+  content: @Composable ColumnScope.() -> Unit,
+) {
+  Surface(modifier = modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
+    Column(modifier = Modifier.fillMaxSize()) {
+      TitleBar(title = title, onBack = onClose)
+      Column(
+        modifier = Modifier
+          .fillMaxSize()
+          .verticalScroll(rememberScrollState())
+          .padding(horizontal = 20.dp),
+        content = content,
+      )
+    }
+  }
 }
 
 /** String resource id of the short chip label for a glitch region. */

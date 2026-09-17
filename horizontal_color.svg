@@ -23,8 +23,8 @@
      inkscape:pagecheckerboard="0"
      inkscape:deskcolor="#d1d1d1"
      inkscape:zoom="2.5066383"
-     inkscape:cx="188.10053"
-     inkscape:cy="213.03432"
+     inkscape:cx="188.3"
+     inkscape:cy="213.03433"
      inkscape:window-width="2548"
      inkscape:window-height="2041"
      inkscape:window-x="2555"
@@ -39,17 +39,17 @@
        originy="0"
        spacingx="1"
        spacingy="1"
-       empcolor="#0099e5"
-       empopacity="0.30196078"
+       empcolor="#000000"
+       empopacity="0.07058824"
        color="#0099e5"
-       opacity="0.14901961"
+       opacity="0.08235294"
        empspacing="1"
        enabled="true"
        visible="true"
        dotted="true" />
   </sodipodi:namedview>
   <rect
-     style="fill:#c51b00;fill-opacity:1;stroke-width:0;stroke-linecap:round"
+     style="fill:#dc4d35;fill-opacity:1;stroke-width:0;stroke-linecap:round"
      id="rect1"
      width="116"
      height="512"
@@ -59,7 +59,7 @@
      ry="16"
      transform="rotate(90)" />
   <rect
-     style="fill:#0032ff;fill-opacity:1;stroke-width:0;stroke-linecap:round"
+     style="fill:#5173ff;fill-opacity:1;stroke-width:0;stroke-linecap:round"
      id="rect2"
      width="116"
      height="512"
@@ -69,7 +69,7 @@
      ry="16"
      transform="rotate(90)" />
   <rect
-     style="fill:#09b50f;fill-opacity:1;stroke-width:0;stroke-linecap:round"
+     style="fill:#30b535;fill-opacity:1;stroke-width:0;stroke-linecap:round"
      id="rect3"
      width="116"
      height="512"
@@ -79,7 +79,7 @@
      ry="16"
      transform="rotate(90)" />
   <rect
-     style="fill:#ff801f;fill-opacity:1;stroke-width:0;stroke-linecap:round"
+     style="fill:#ff8d38;fill-opacity:1;stroke-width:0;stroke-linecap:round"
      id="rect4"
      width="116"
      height="512"

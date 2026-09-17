@@ -46,7 +46,7 @@
     <string name="dqt_skip">Skip</string>
     <string name="dqt_next">Next</string>
     <string name="dqt_next_edited">Next (%1$d changed)</string>
-    <string name="dqt_reset">Reset all</string>
+    <string name="dqt_reset">Reset</string>
 
     <!-- Pattern tiles -->
     <string name="dqt_family_brightness">Brightness</string>
@@ -75,6 +75,7 @@
     <string name="dqt_table_chroma">chroma</string>
     <string name="dqt_sheet_reset">Reset this pattern</string>
     <string name="dqt_sheet_hint">Fine patterns need detail in the photo: on a smooth image the finest rows change nothing.</string>
+    <string name="dqt_sheet_hint_dc">One number for every block. Turn the wheel or tap the arrows to step it one at a time.</string>
     <string name="dqt_section_dc">Block average - moves the whole picture</string>
     <string name="dqt_section_bands">%1$s - %2$s bands</string>
     <string name="dqt_section_cells">%1$s - %2$s cells</string>
@@ -84,9 +85,54 @@
     <string name="dqt_scale_fine">Fine</string>
     <string name="dqt_scale_subpixel">Sub-pixel</string>
 
-    <!-- Quantizer row: short label, slider, value, reset -->
+    <!-- Quantizer row: slider, value, reset; the DC rows use a number picker -->
     <string name="dqt_row_label">#%1$d (%2$d,%3$d)</string>
+    <string name="dqt_row_picker_label">Block average, value %1$d</string>
     <string name="dqt_row_reset_to">reset to %1$d</string>
+    <string name="dqt_bit_label">b%1$d</string>
+
+    <!-- DQT info screen -->
+    <string name="dqt_info_title">How DQT works</string>
+    <string name="dqt_info_intro_title">The tables behind the picture</string>
+    <string name="dqt_info_intro_body">JPEG does not store pixels. It splits the photo into 8x8 blocks, describes each block with 64 numbers, and the quantization tables (DQT) say how roughly each of those numbers is kept. Editing them changes how the photo is stored, not what was photographed.</string>
+    <string name="dqt_info_basis_title">The 64 patterns</string>
+    <string name="dqt_info_basis_desc">The 64 DCT basis patterns of an 8x8 block</string>
+    <string name="dqt_info_basis_body">Every square below is one of those 64 numbers, drawn as the pattern it adds to each block: how much it wiggles, and in which direction. The top-left is flat, so it only moves the block\'s average. The further right and down, the finer the detail it carries.</string>
+    <string name="dqt_info_basis_axes">Left to right: u counts wiggles across a block, from 0 to 7. Top to bottom: v counts them down the block.</string>
+    <string name="dqt_info_family_title">Which square belongs to which button</string>
+    <string name="dqt_info_family_body">The flip screen sorts those squares into four families. The outlined squares are the ones a family covers:</string>
+    <string name="dqt_info_family_colour">Each family exists twice: the luma table (drawn here) and the chroma table, whose buttons carry the word colour. The colour families tint the picture instead of adding brightness detail.</string>
+    <string name="dqt_info_quant_title">What a quantizer value does</string>
+    <string name="dqt_info_quant_body">Each number is divided by its quantizer when the file is written and multiplied back when it is read, so a bigger quantizer keeps less of that pattern:</string>
+    <string name="dqt_info_quant_value">value %1$d</string>
+    <string name="dqt_info_quant_fine">kept finely - the pattern stays smooth</string>
+    <string name="dqt_info_quant_coarse">kept roughly - the pattern flattens into bands</string>
+    <string name="dqt_info_quant_zero">zero - the pattern is deleted</string>
+    <string name="dqt_info_bits_title">What flipping a bit does</string>
+    <string name="dqt_info_bits_body">A quantizer is one byte, so it holds 0 to 255. Flipping bit k adds or removes 2 to the power k, which is why the high bits move the picture far more than the low ones:</string>
+    <string name="dqt_info_bits_note">The slider on the flip screen is the same thing, made continuous: left is a smaller quantizer (smoother there), right is larger (coarser, so that pattern rings).</string>
+    <string name="dqt_info_limits_title">Worth knowing</string>
+    <string name="dqt_info_limit_dead">The first byte of each table is not a quantizer - the flips that touch it make the file undecodable, so the flip screen leaves it out.</string>
+    <string name="dqt_info_limit_quiet">A pattern only shows where the photo has detail at that frequency. On a smooth photo the finest squares change nothing.</string>
+    <string name="dqt_info_limit_chroma">Colour families live in the second table, so the same pattern tints the picture rather than adding luma texture.</string>
+
+    <!-- Resize info screen -->
+    <string name="resize_info_title">Why resize first</string>
+    <string name="resize_info_blocks_title">8x8 squares, all the way down</string>
+    <string name="resize_info_blocks_body">JPEG does not store pixels. It cuts the picture into squares of 8 by 8 pixels and writes 64 numbers for each square - how bright, and how the brightness wiggles inside it. Every glitch the app makes lands inside those squares, so they are also the shape of what you see when a file is corrupted.</string>
+    <string name="resize_info_blocks_one">one 8x8 square, shown large: 64 pixels, 64 numbers</string>
+    <string name="resize_info_size_title">Smaller picture, bigger squares</string>
+    <string name="resize_info_size_body">A square is always 8 pixels, so the smaller the picture, the larger a share of it each square covers. Retuning the quantization table changes how much of each square is kept, and with fewer, bigger squares the result of that is far plainer: the same wiggle spreads across more of the frame instead of hiding in fine detail.</string>
+    <string name="resize_info_size_small">800 px wide - 8x8 squares are 1/100 of the width</string>
+    <string name="resize_info_size_large">3200 px wide - the same squares, 1/400 of the width</string>
+    <string name="resize_info_speed_title">And much faster to change</string>
+    <string name="resize_info_speed_body">Every edit is applied to the whole file and decoded again to show you the result, so the work is proportional to the number of squares. Halving the width and the height leaves a quarter of the squares - and a quarter of the work:</string>
+    <string name="resize_info_speed_original">3200 x 2400 - 120,000 squares</string>
+    <string name="resize_info_speed_default">1080 wide - about 13,800 squares</string>
+    <string name="resize_info_speed_small">800 x 600 - 7,500 squares, 16x less</string>
+    <string name="resize_info_speed_note">Same scale for all three bars. The smaller file also saves and shares faster, and is easier to keep in memory while glitching.</string>
+    <string name="resize_info_controls_title">What the controls do</string>
+    <string name="resize_info_controls_body">The slider picks the width the file is saved at, and the button under it does the resize. Crop to 9:16 trims the sides, which removes squares again. Skip leaves the file at full size: the most faithful result, but the slowest to work with and the hardest to see anything in.</string>
 
     <!-- Screen 4: glitch editor -->
     <string name="edit_image_desc">Glitched image</string>

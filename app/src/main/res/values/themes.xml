@@ -2,4 +2,20 @@
 <resources>
 
     <style name="Theme.Glitch" parent="android:Theme.Material.Light.NoActionBar" />
+
+    <!--
+      The theme the DQT screen's number picker is built with.
+
+      android.widget.NumberPicker is a platform view: it draws its numbers, its
+      arrows and its wheel from the Android theme it is inflated with, not from
+      Compose. The app's own theme is a light one because Compose paints the
+      surface itself - so the picker would come out with black numbers and black
+      arrows, invisible on the black panel, and Compose can only recolour the
+      selected number, never the wheel around it. Handing the widget its own dark
+      theme is what actually fixes it.
+    -->
+    <style name="Theme.Glitch.NumberPicker" parent="android:Theme.Material.NoActionBar">
+        <item name="android:textColorPrimary">@color/number_picker_text</item>
+        <item name="android:colorControlNormal">@color/number_picker_text</item>
+    </style>
 </resources>
