@@ -3,47 +3,51 @@ package ca.justinmo.glitch
 import android.graphics.Bitmap
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.rememberTransformableState
-import androidx.compose.foundation.gestures.transformable
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.GridOn
-import androidx.compose.material.icons.filled.HorizontalSplit
+import androidx.compose.material.icons.filled.Contrast
 import androidx.compose.material.icons.filled.LightMode
-import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Texture
-import androidx.compose.material.icons.filled.VerticalSplit
-import androidx.compose.material.icons.filled.ViewColumn
-import androidx.compose.material.icons.filled.ViewStream
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -59,22 +63,31 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalInspectionMode
+import androidx.compose.ui.res.imageResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import ca.justinmo.glitch.jpeg.ByteSpan
 import ca.justinmo.glitch.jpeg.JpegParser
@@ -85,21 +98,52 @@ import ca.justinmo.glitch.jpeg.QuantTable
 import ca.justinmo.glitch.jpeg.QuantTables
 import ca.justinmo.glitch.ui.theme.GlitchTheme
 import java.util.Locale
+import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /** Long-edge cap for the preview on this screen. */
 private const val DQT_PREVIEW_CAP_PX = 1400
 
-/** How much of the window the bits panel takes when it is open. */
-private const val DQT_PANEL_HEIGHT_FRACTION = 0.62f
+/**
+ * Panel heights as a fraction of the window. The panel opens at its tallest -
+ * half the window - and can be dragged down to [DQT_PANEL_SHORT_FRACTION], or
+ * past [DQT_PANEL_DISMISS_FRACTION] to close.
+ *
+ * [DQT_PANEL_DRAG_MIN_FRACTION] is deliberately below [DQT_PANEL_DISMISS_FRACTION],
+ * otherwise the clamp would stop the drag before it could ever dismiss.
+ */
+private const val DQT_PANEL_MAX_FRACTION = 0.5f
+private const val DQT_PANEL_SHORT_FRACTION = 0.3f
+private const val DQT_PANEL_DRAG_MIN_FRACTION = 0.08f
+private const val DQT_PANEL_DISMISS_FRACTION = 0.2f
+
+/**
+ * Fling speed (px/s, downwards positive) that overrides the position when the
+ * finger lifts: faster than this one way closes the panel, the other way opens
+ * it fully. Below it the nearest stop wins.
+ */
+private const val DQT_PANEL_FLING_VELOCITY = 900f
+
+/** The stops a released drag snaps to: the short one, and the half-window top. */
+private val DQT_PANEL_STOPS = listOf(
+  DQT_PANEL_SHORT_FRACTION,
+  DQT_PANEL_MAX_FRACTION,
+)
+
+/**
+ * Height the panel assumes when its parent gives it no bound at all - which is
+ * what a preview (and any unbounded container) reports, and where multiplying an
+ * infinite height by a fraction would blow up the layout.
+ */
+private val DQT_PANEL_FALLBACK_HEIGHT = 640.dp
 
 /**
  * Which set of quantizers a tile opens: an effect family ([QuantAxis]) plus
  * whether it lives in the chroma table. `DC + chroma` is saturation and
  * `DC + luma` is brightness; "color" in the labels always means chroma.
  */
-internal data class DqtFamily(val axis: QuantAxis, val chroma: Boolean)
+internal data class DqtFamily(val axis: QuantAxis, val chroma: Boolean, val tint: Boolean = false)
 
 /**
  * The tiles on this screen in display order: the two that move the whole picture
@@ -107,14 +151,14 @@ internal data class DqtFamily(val axis: QuantAxis, val chroma: Boolean)
  * chroma.
  */
 internal val DQT_FAMILIES: List<DqtFamily> = listOf(
-  DqtFamily(QuantAxis.DC, chroma = false),
-  DqtFamily(QuantAxis.DC, chroma = true),
-  DqtFamily(QuantAxis.HORIZONTAL, chroma = false),
-  DqtFamily(QuantAxis.HORIZONTAL, chroma = true),
-  DqtFamily(QuantAxis.VERTICAL, chroma = false),
-  DqtFamily(QuantAxis.VERTICAL, chroma = true),
-  DqtFamily(QuantAxis.CHECKERED, chroma = false),
-  DqtFamily(QuantAxis.CHECKERED, chroma = true),
+  DqtFamily(QuantAxis.DC, chroma = false, tint = true),
+  DqtFamily(QuantAxis.DC, chroma = true, tint = true),
+  DqtFamily(QuantAxis.HORIZONTAL, chroma = false,),
+  DqtFamily(QuantAxis.HORIZONTAL, chroma = true,),
+  DqtFamily(QuantAxis.VERTICAL, chroma = false,),
+  DqtFamily(QuantAxis.VERTICAL, chroma = true,),
+  DqtFamily(QuantAxis.CHECKERED, chroma = false,),
+  DqtFamily(QuantAxis.CHECKERED, chroma = true,),
 )
 
 /** Quantizers of [family] in [tables], coarsest frequency first. */
@@ -172,54 +216,67 @@ private fun sizeText(entries: List<QuantEntry>): String {
 }
 
 /**
- * Two-finger zoom for gestures that start *outside* the preview.
+ * Zoom and pan for the whole screen.
  *
- * The preview zooms and pans itself with `transformable`, exactly like the
- * resize and edit screens, so a pinch there needs nothing extra. The bits panel
- * is drawn over the lower part of the window though, and a pinch that starts on
- * it would only scroll the list and leave the picture alone - so this modifier
- * sits on the whole screen, sees every gesture first (a panel above it cannot
- * hide events from its parent) and takes over the ones with two or more fingers.
+ * The other screens put `transformable` on the image, which works because
+ * nothing sits on top of it. Here the pattern row is drawn *over* the photo and
+ * the bits panel slides over both, and a gesture that lands on either of them
+ * never reaches the image - so this sits on the screen root instead, sees every
+ * gesture first (a child cannot hide events from its parent) and decides:
  *
- * Single-finger gestures are never touched: list scrolling, tile taps and the
- * preview's own pan all keep working. A gesture that starts on the preview is
- * left alone as well, so the two handlers can never zoom twice for one pinch.
+ * * **two or more fingers** zoom and pan, wherever they land - including on the
+ *   pattern row and on the open panel;
+ * * **one finger** pans only when the gesture starts on the photo and outside
+ *   the panel, so the panel's list still scrolls and its buttons still tap. A
+ *   tap is never consumed, because panning only starts past the touch slop.
  */
-private fun Modifier.pinchOutsidePreview(
+private fun Modifier.dqtTransformGestures(
   previewBoundsProvider: () -> Rect?,
-  onZoom: (zoomChange: Float, panChange: Offset) -> Unit,
+  panelBoundsProvider: () -> Rect?,
+  onTransform: (zoomChange: Float, panChange: Offset) -> Unit,
 ): Modifier = pointerInput(Unit) {
+  val slop = viewConfiguration.touchSlop
   awaitEachGesture {
     val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-    val bounds = previewBoundsProvider()
-    if (bounds == null || bounds.contains(down.position)) {
-      return@awaitEachGesture // the preview owns this gesture
-    }
+    val preview = previewBoundsProvider()
+    val panel = panelBoundsProvider()
+    val panAllowed = preview != null && preview.contains(down.position) &&
+      (panel == null || !panel.contains(down.position))
 
     var lastSpan = 0f
     var lastCentroid = Offset.Zero
+    var pansBy = 0f
+    var panning = false
     while (true) {
       val event = awaitPointerEvent(PointerEventPass.Initial)
       val pressed = event.changes.filter { it.pressed }
       if (pressed.isEmpty()) break
-      if (pressed.size < 2) {
-        lastSpan = 0f // one finger left: not a pinch, let the child have it
-        continue
+
+      if (pressed.size >= 2) {
+        val centroid = pressed.fold(Offset.Zero) { sum, change -> sum + change.position } /
+          pressed.size.toFloat()
+        val span = pressed.fold(0f) { sum, change ->
+          sum + (change.position - centroid).getDistance()
+        } / pressed.size
+        if (lastSpan > 0f && span > 0f) {
+          onTransform((span / lastSpan).coerceIn(0.5f, 2f), centroid - lastCentroid)
+        }
+        lastSpan = span
+        lastCentroid = centroid
+        panning = false
+        pressed.forEach { it.consume() }
+      } else {
+        lastSpan = 0f
+        val change = pressed.first()
+        if (!panAllowed) continue
+        val delta = change.position - change.previousPosition
+        pansBy += delta.getDistance()
+        if (!panning && pansBy > slop) panning = true
+        if (panning && delta != Offset.Zero) {
+          onTransform(1f, delta)
+          change.consume()
+        }
       }
-      val centroid = pressed.fold(Offset.Zero) { sum, change -> sum + change.position } /
-        pressed.size.toFloat()
-      val span = pressed.fold(0f) { sum, change ->
-        sum + (change.position - centroid).getDistance()
-      } / pressed.size
-      if (lastSpan > 0f && span > 0f) {
-        onZoom(
-          (span / lastSpan).coerceIn(0.5f, 2f),
-          centroid - lastCentroid,
-        )
-      }
-      lastSpan = span
-      lastCentroid = centroid
-      pressed.forEach { it.consume() }
     }
   }
 }
@@ -265,12 +322,15 @@ internal fun DqtScreen(
   var offset by remember { mutableStateOf(initialOffset) }
 
   // The panel animates out after the family is cleared, so it keeps the last
-  // one it showed.
+  // one it showed; its bounds are dropped with it, so a closed panel cannot go
+  // on blocking pans over the photo.
   var shownFamily by remember { mutableStateOf<DqtFamily?>(null) }
-  LaunchedEffect(openFamily) { openFamily?.let { shownFamily = it } }
-
   var previewBoundsInRoot by remember { mutableStateOf<Rect?>(null) }
+  var panelBoundsInRoot by remember { mutableStateOf<Rect?>(null) }
   var screenBoundsInRoot by remember { mutableStateOf<Rect?>(null) }
+  LaunchedEffect(openFamily) {
+    if (openFamily == null) panelBoundsInRoot = null
+  }
 
   val applied = remember(bytes, tables, edits) {
     if (edits.isEmpty()) bytes else bytes.copyOf().also {
@@ -294,7 +354,7 @@ internal fun DqtScreen(
     modifier = Modifier
       .fillMaxSize()
       .onGloballyPositioned { screenBoundsInRoot = it.boundsInRoot() }
-      .pinchOutsidePreview(
+      .dqtTransformGestures(
         // Read through the state holders, so the bounds are current whenever a
         // gesture arrives (this lambda is captured once, the values are not).
         previewBoundsProvider = {
@@ -303,7 +363,13 @@ internal fun DqtScreen(
           if (screen == null || preview == null) null
           else preview.translate(-screen.topLeft)
         },
-        onZoom = transform,
+        panelBoundsProvider = {
+          val screen = screenBoundsInRoot
+          val panel = panelBoundsInRoot
+          if (screen == null || panel == null) null
+          else panel.translate(-screen.topLeft)
+        },
+        onTransform = transform,
       ),
   ) {
     DqtScreenContent(
@@ -312,10 +378,14 @@ internal fun DqtScreen(
       edits = edits,
       zoomScale = scale,
       zoomOffset = offset,
-      onTransform = transform,
       onPreviewBounds = { previewBoundsInRoot = it },
       onBack = onBack,
-      onOpenFamily = { openFamily = it },
+      // Set the shown family with the open one, so the panel is created on the
+      // tapped family rather than reusing the page it was left on.
+      onOpenFamily = { family ->
+        shownFamily = family
+        openFamily = family
+      },
       onSkip = { onContinue(bytes, scale, offset) },
       onNext = { onContinue(applied, scale, offset) },
       onResetAll = { edits = emptyMap() },
@@ -332,16 +402,23 @@ internal fun DqtScreen(
           family = family,
           tables = tables,
           edits = edits,
-          onToggleBit = { entry, bit ->
-            val current = edits[entry.offset] ?: entry.value
-            edits = edits + (entry.offset to (current xor (1 shl bit)))
+          onValueChange = { entry, value ->
+            // Setting a quantizer back to the value the file already has drops
+            // the edit, so the counts and badges stay honest.
+            edits = if (value == entry.value) {
+              edits - entry.offset
+            } else {
+              edits + (entry.offset to value)
+            }
           },
           onResetEntry = { entry -> edits = edits - entry.offset },
-          onResetFamily = {
-            val offsets = entriesFor(tables, family).mapTo(HashSet()) { it.offset }
+          onResetFamily = { target ->
+            val offsets = entriesFor(tables, target).mapTo(HashSet()) { it.offset }
             edits = edits.filterKeys { it !in offsets }
           },
+          onFamilyChange = { openFamily = it },
           onClose = { openFamily = null },
+          onBounds = { panelBoundsInRoot = it },
         )
       }
     }
@@ -349,8 +426,9 @@ internal fun DqtScreen(
 }
 
 /**
- * Stateless body of [DqtScreen]: the preview with the eight pattern tiles and
- * the skip / next row under it. Decoding, byte editing and zoom state live in
+ * Stateless body of [DqtScreen]: the preview with the pattern row over its
+ * bottom edge and the skip / next row centred in the space under it, laid out
+ * like the resize screen. Decoding, byte editing and zoom state live in
  * [DqtScreen], so this can be rendered - and previewed - on its own.
  */
 @Composable
@@ -360,7 +438,6 @@ internal fun DqtScreenContent(
   edits: Map<Int, Int>,
   zoomScale: Float,
   zoomOffset: Offset,
-  onTransform: (zoomChange: Float, panChange: Offset) -> Unit,
   onPreviewBounds: (Rect) -> Unit,
   onBack: () -> Unit,
   onOpenFamily: (DqtFamily) -> Unit,
@@ -369,25 +446,25 @@ internal fun DqtScreenContent(
   onResetAll: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
-  val transformState = rememberTransformableState { zoomChange, offsetChange, _ ->
-    onTransform(zoomChange, offsetChange)
-  }
-
   PreviewWithControls(
     modifier = modifier,
     preview = { previewModifier ->
-      Box(
+      BoxWithConstraints(
         modifier = previewModifier.onGloballyPositioned { onPreviewBounds(it.boundsInRoot()) },
-        contentAlignment = Alignment.Center,
+        contentAlignment = Alignment.TopCenter,
       ) {
         val bmp = preview
+        // Height the fitted photo really occupies, so the buttons can be centred
+        // in whatever is left under it - the resize screen's arrangement.
+        val photoHeight = fittedPhotoHeight(bmp, maxWidth, maxHeight)
+        val roomBelow = maxHeight >= TALL_WINDOW_HEIGHT && photoHeight < maxHeight
+
         if (bmp != null) {
           Image(
             bitmap = bmp,
             contentDescription = stringResource(R.string.dqt_preview_desc),
             modifier = Modifier
               .fillMaxSize()
-              .transformable(state = transformState)
               .graphicsLayer(
                 scaleX = zoomScale,
                 scaleY = zoomScale,
@@ -395,84 +472,183 @@ internal fun DqtScreenContent(
                 translationY = zoomOffset.y,
               ),
             contentScale = ContentScale.Fit,
+            alignment = Alignment.TopCenter,
             filterQuality = FilterQuality.None,
           )
         }
-        Box(modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter)) {
+
+        Box(modifier = Modifier.fillMaxWidth()) {
           TitleBar(title = stringResource(R.string.dqt_title), onBack = onBack)
+        }
+
+        if (roomBelow) {
+          // Pattern row over the bottom edge of the photo.
+          Box(
+            modifier = Modifier
+              .fillMaxWidth()
+              .height(photoHeight),
+            contentAlignment = Alignment.BottomCenter,
+          ) {
+            DqtFamilyRow(
+              tables = tables,
+              edits = edits,
+              onOpenFamily = onOpenFamily,
+            )
+          }
+
+          // Skip / next centred in the space below the photo.
+          Box(
+            modifier = Modifier
+              .fillMaxWidth()
+              .height(maxHeight - photoHeight)
+              .align(Alignment.BottomCenter),
+            contentAlignment = Alignment.Center,
+          ) {
+            DqtActionsRow(
+              edits = edits,
+              onSkip = onSkip,
+              onNext = onNext,
+              onResetAll = onResetAll,
+              modifier = Modifier.padding(horizontal = 24.dp),
+            )
+          }
+        }
+      }
+    },
+    overlay = {
+      BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+        val photoHeight = fittedPhotoHeight(preview, maxWidth, maxHeight)
+        // Short window, or a photo that fills the height: the pattern row goes
+        // over the media instead, as on the other screens.
+        if (maxHeight < TALL_WINDOW_HEIGHT || photoHeight >= maxHeight) {
+          DqtFamilyRow(
+            tables = tables,
+            edits = edits,
+            onOpenFamily = onOpenFamily,
+            modifier = Modifier.padding(top = 16.dp),
+          )
         }
       }
     },
     controls = {
-      Column(modifier = Modifier.fillMaxWidth()) {
-        Row(
-          modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 8.dp, horizontal = 4.dp),
-          horizontalArrangement = Arrangement.SpaceEvenly,
-          verticalAlignment = Alignment.CenterVertically,
-        ) {
-          DQT_FAMILIES.forEach { family ->
-            DqtFamilyIconButton(
-              family = family,
-              tables = tables,
-              edits = edits,
-              onClick = { onOpenFamily(family) },
-            )
-          }
-        }
-
-        Row(
-          modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(top = 4.dp, bottom = 16.dp),
-          horizontalArrangement = Arrangement.spacedBy(8.dp),
-          verticalAlignment = Alignment.CenterVertically,
-        ) {
-          Button(
-            onClick = onSkip,
-            modifier = Modifier.height(56.dp),
-            colors = ButtonDefaults.buttonColors(
-              containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-              contentColor = MaterialTheme.colorScheme.onSurface,
-            ),
-            elevation = ButtonDefaults.buttonElevation(defaultElevation = 2.dp),
-          ) { Text(text = stringResource(R.string.dqt_skip)) }
-
-          if (edits.isNotEmpty()) {
-            TextButton(onClick = onResetAll) {
-              Text(
-                text = stringResource(R.string.dqt_reset),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-              )
-            }
-          }
-
-          Button(
-            onClick = onNext,
-            modifier = Modifier.weight(1f).height(56.dp),
-            elevation = ButtonDefaults.buttonElevation(defaultElevation = 4.dp),
-          ) {
-            Text(
-              text = if (edits.isEmpty()) {
-                stringResource(R.string.dqt_next)
-              } else {
-                stringResource(R.string.dqt_next_edited, edits.size)
-              },
-              maxLines = 1,
-              overflow = TextOverflow.Ellipsis,
-            )
-          }
+      BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+        val photoHeight = fittedPhotoHeight(preview, maxWidth, maxHeight)
+        if (maxHeight < TALL_WINDOW_HEIGHT || photoHeight >= maxHeight) {
+          DqtActionsRow(
+            edits = edits,
+            onSkip = onSkip,
+            onNext = onNext,
+            onResetAll = onResetAll,
+            modifier = Modifier
+              .navigationBarsPadding()
+              .padding(horizontal = 24.dp)
+              .padding(top = 16.dp, bottom = 24.dp),
+          )
         }
       }
     },
   )
 }
 
+/**
+ * Height the preview takes once `ContentScale.Fit` has letterboxed it inside
+ * [maxWidth] x [maxHeight]. Everything below that is free for the buttons.
+ */
+private fun fittedPhotoHeight(bmp: ImageBitmap?, maxWidth: Dp, maxHeight: Dp): Dp =
+  if (bmp != null && bmp.width > 0 && bmp.height > 0) {
+    minOf(maxHeight, maxWidth * bmp.height / bmp.width)
+  } else {
+    maxHeight
+  }
+
+/** The eight pattern buttons, one per effect family. */
+@Composable
+private fun DqtFamilyRow(
+  tables: List<QuantTable>,
+  edits: Map<Int, Int>,
+  onOpenFamily: (DqtFamily) -> Unit,
+  modifier: Modifier = Modifier,
+) {
+  Row(
+    modifier = modifier
+      .fillMaxWidth()
+      .padding(vertical = 8.dp),
+    verticalAlignment = Alignment.CenterVertically,
+  ) {
+    DQT_FAMILIES.forEach { family ->
+      DqtFamilyIconButton(
+        family = family,
+        tables = tables,
+        edits = edits,
+        onClick = { onOpenFamily(family) },
+        modifier = Modifier.weight(1f),
+      )
+    }
+  }
+}
+
+/**
+ * Skip / reset / next. Skip keeps its place on the left and next wraps its own
+ * text, right aligned, so the pair reads as one leading and one trailing action.
+ */
+@Composable
+private fun DqtActionsRow(
+  edits: Map<Int, Int>,
+  onSkip: () -> Unit,
+  onNext: () -> Unit,
+  onResetAll: () -> Unit,
+  modifier: Modifier = Modifier,
+) {
+  Row(
+    modifier = modifier.fillMaxWidth(),
+    horizontalArrangement = Arrangement.spacedBy(8.dp),
+    verticalAlignment = Alignment.CenterVertically,
+  ) {
+    Button(
+      onClick = onSkip,
+      modifier = Modifier.height(56.dp),
+      colors = ButtonDefaults.buttonColors(
+        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+      ),
+      elevation = ButtonDefaults.buttonElevation(defaultElevation = 2.dp),
+    ) { Text(text = stringResource(R.string.dqt_skip)) }
+
+    if (edits.isNotEmpty()) {
+      TextButton(onClick = onResetAll) {
+        Text(
+          text = stringResource(R.string.dqt_reset),
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+          maxLines = 1,
+        )
+      }
+    }
+
+    Spacer(Modifier.weight(1f))
+
+    Button(
+      onClick = onNext,
+      modifier = Modifier.height(56.dp),
+      elevation = ButtonDefaults.buttonElevation(defaultElevation = 4.dp),
+    ) {
+      Text(
+        text = if (edits.isEmpty()) {
+          stringResource(R.string.dqt_next)
+        } else {
+          stringResource(R.string.dqt_next_edited, edits.size)
+        },
+        maxLines = 1,
+      )
+    }
+  }
+}
+
+@Composable
 private fun familyIcon(family: DqtFamily): ImageVector = when (family.axis) {
-  QuantAxis.DC -> if (family.chroma) Icons.Filled.Palette else Icons.Filled.LightMode
-  QuantAxis.HORIZONTAL -> if (family.chroma) Icons.Filled.ViewStream else Icons.Filled.HorizontalSplit
-  QuantAxis.VERTICAL -> if (family.chroma) Icons.Filled.ViewColumn else Icons.Filled.VerticalSplit
-  QuantAxis.CHECKERED -> if (family.chroma) Icons.Filled.Texture else Icons.Filled.GridOn
+  QuantAxis.DC -> if (family.chroma) Icons.Filled.Contrast else Icons.Filled.LightMode
+  QuantAxis.HORIZONTAL -> if (family.chroma) ImageVector.vectorResource(R.drawable.horizontal_color) else ImageVector.vectorResource(R.drawable.horizontal)
+  QuantAxis.VERTICAL -> if (family.chroma) ImageVector.vectorResource(R.drawable.vertical_color) else ImageVector.vectorResource(R.drawable.vertical)
+  QuantAxis.CHECKERED -> if (family.chroma) ImageVector.vectorResource(R.drawable.checkered_color) else ImageVector.vectorResource(R.drawable.checkered)
 }
 
 /** One pattern icon button: icon representing the family area/type. */
@@ -490,7 +666,8 @@ private fun DqtFamilyIconButton(
 
   Surface(
     modifier = modifier
-      .size(48.dp)
+      .padding(4.dp)
+      .aspectRatio(1f)
       .clickable(enabled = enabled, onClick = onClick),
     shape = RoundedCornerShape(12.dp),
     color = when {
@@ -508,31 +685,234 @@ private fun DqtFamilyIconButton(
       Icon(
         imageVector = familyIcon(family),
         contentDescription = stringResource(familyTitleRes(family)),
-        modifier = Modifier.size(24.dp)
+        modifier = Modifier.size(24.dp),
+        tint = if (family.tint) LocalContentColor.current else Color.Unspecified,
       )
     }
   }
 }
 
 /**
- * The pattern panel: every quantizer of one family, one per row, under section
- * labels that say how fine the row's pattern is. Tapping a bit inside a row
- * toggles that bit of the quantizer byte, which is what gets written to the
- * file.
+ * The pattern panel: every quantizer of the current family, one per row, under
+ * section labels that say how fine the row's pattern is. Each row is a label, a
+ * slider and a reset, and swiping left or right pages through the other
+ * families without leaving the panel.
  *
- * This is a plain surface over the bottom of the screen rather than a modal
+ * The panel is a plain surface over the bottom of the screen rather than a modal
  * sheet, so the preview above stays interactive - pinch it to inspect the effect
- * while the panel is open.
+ * while the panel is open. It can be dragged by its handle: up to its tall stop,
+ * down to its short one, and down past that to close.
  */
 @Composable
 private fun DqtBitsPanel(
   family: DqtFamily,
   tables: List<QuantTable>,
   edits: Map<Int, Int>,
-  onToggleBit: (QuantEntry, Int) -> Unit,
+  onValueChange: (QuantEntry, Int) -> Unit,
   onResetEntry: (QuantEntry) -> Unit,
-  onResetFamily: () -> Unit,
+  onResetFamily: (DqtFamily) -> Unit,
+  onFamilyChange: (DqtFamily) -> Unit,
   onClose: () -> Unit,
+  onBounds: (Rect) -> Unit,
+  initialFraction: Float = DQT_PANEL_MAX_FRACTION,
+) {
+  BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+    // A preview - or any parent that leaves the height unbounded - reports an
+    // infinite max height, and scaling that by the panel fraction throws. Fall
+    // back to a sane window instead.
+    val windowHeight = if (maxHeight.value.isFinite()) maxHeight else DQT_PANEL_FALLBACK_HEIGHT
+    val windowHeightPx = with(LocalDensity.current) { windowHeight.toPx() }.coerceAtLeast(1f)
+
+    // Where the panel sits while it is being dragged, and where it snaps to when
+    // the finger lifts. Following the finger exactly (snap) and animating the
+    // rest keeps the drag glued to the touch without a springy lag.
+    var dragging by remember { mutableStateOf(false) }
+    var dragFraction by remember { mutableFloatStateOf(initialFraction) }
+    var targetFraction by remember { mutableFloatStateOf(initialFraction) }
+    val fraction by animateFloatAsState(
+      targetValue = if (dragging) dragFraction else targetFraction,
+      animationSpec = if (dragging) snap() else tween(durationMillis = 200),
+    )
+
+    val pagerState = rememberPagerState(
+      initialPage = DQT_FAMILIES.indexOf(family).coerceAtLeast(0),
+    ) { DQT_FAMILIES.size }
+    // Land on the family that was tapped. `initialPage` only applies the first
+    // time this pager is created, and the panel stays composed while it slides
+    // out (and keeps the last family it showed), so without this an already
+    // built pager would open on whatever page it was left on.
+    LaunchedEffect(family) {
+      val index = DQT_FAMILIES.indexOf(family)
+      if (index >= 0 && index != pagerState.currentPage) pagerState.scrollToPage(index)
+    }
+    // Report the settled page, so the screen's idea of the open family keeps up
+    // with the swipes (and closing reopens where the user left off).
+    LaunchedEffect(pagerState.currentPage) {
+      onFamilyChange(DQT_FAMILIES[pagerState.currentPage])
+    }
+
+    // One drag for every grab target: the handle, the page header, and (through
+    // the nested-scroll connection below) the quantizer list itself.
+    val dragState = rememberDraggableState { delta ->
+      dragFraction = (dragFraction - delta / windowHeightPx)
+        .coerceIn(DQT_PANEL_DRAG_MIN_FRACTION, DQT_PANEL_MAX_FRACTION)
+    }
+    /**
+     * Where the panel goes when the finger lifts: a flick decides it, otherwise
+     * the nearest stop. [velocityY] is in px/s, positive downwards.
+     */
+    fun settleDrag(velocityY: Float = 0f) {
+      when {
+        velocityY > DQT_PANEL_FLING_VELOCITY -> {
+          // Flicked down: leave, from whatever height it was at. Freeze at that
+          // height first, so it slides away at that size instead of springing
+          // back up on the way out.
+          targetFraction = dragFraction
+          onClose()
+        }
+        velocityY < -DQT_PANEL_FLING_VELOCITY -> {
+          // Flicked up: open as far as it goes.
+          targetFraction = DQT_PANEL_MAX_FRACTION
+        }
+        dragFraction < DQT_PANEL_DISMISS_FRACTION -> {
+          targetFraction = dragFraction
+          onClose()
+        }
+        else -> {
+          // Neither flick nor past the dismissal height: snap to the nearest stop.
+          targetFraction = DQT_PANEL_STOPS.minBy { stop -> kotlin.math.abs(stop - dragFraction) }
+        }
+      }
+    }
+    val dragModifier = Modifier.draggable(
+      orientation = Orientation.Vertical,
+      state = dragState,
+      onDragStarted = {
+        dragFraction = fraction
+        dragging = true
+      },
+      onDragStopped = { velocity ->
+        dragging = false
+        settleDrag(velocity)
+      },
+    )
+    // A scrollable child always beats a parent's own drag detector, so a drag
+    // inside the list cannot be taken by [dragModifier]. This instead takes the
+    // scroll the list could not use: while the list has room it consumes
+    // everything, and once it is at its end the leftover arrives here and moves
+    // the panel - which is what makes the sheet draggable from anywhere on it.
+    val listDrag = object : NestedScrollConnection {
+      override fun onPostScroll(
+        consumed: Offset,
+        available: Offset,
+        source: NestedScrollSource,
+      ): Offset {
+        // Only a finger moves the panel. Scroll left over from a *fling* is the
+        // list arriving at its end with momentum to spare - a flick from the
+        // bottom of the list back up to the top must not carry on into pulling
+        // the sheet down, which would collapse and then dismiss it.
+        if (source != NestedScrollSource.UserInput) return Offset.Zero
+        if (available.y == 0f) return Offset.Zero
+        dragging = true
+        dragFraction = (dragFraction - available.y / windowHeightPx)
+          .coerceIn(DQT_PANEL_DRAG_MIN_FRACTION, DQT_PANEL_MAX_FRACTION)
+        return Offset(0f, available.y)
+      }
+
+      /**
+       * Called when the finger lifts, before the list's fling runs - which is
+       * why settling happens here and not in [onPostFling]: that one only fires
+       * once the fling animation has finished, so a flick that left the list
+       * still travelling would hold the panel at its dragged height for the
+       * length of that animation before it finally closed.
+       */
+      override suspend fun onPreFling(available: Velocity): Velocity {
+        if (!dragging) return Velocity.Zero
+        dragging = false
+        settleDrag(available.y)
+        // The panel took the gesture; there is nothing left for the list to do.
+        return available
+      }
+
+      override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity {
+        // Safety net for a gesture that reached the fling phase without passing
+        // through [onPreFling].
+        if (dragging) {
+          dragging = false
+          settleDrag(available.y)
+        }
+        return Velocity.Zero
+      }
+    }
+
+    Surface(
+      modifier = Modifier
+        .fillMaxWidth()
+        .height(windowHeight * fraction)
+        .nestedScroll(listDrag)
+        .onGloballyPositioned { onBounds(it.boundsInRoot()) },
+      shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
+      color = MaterialTheme.colorScheme.surfaceContainerLow,
+      tonalElevation = 3.dp,
+      shadowElevation = 12.dp,
+    ) {
+      Column(modifier = Modifier.fillMaxWidth()) {
+        // Grab handle. The panel can be dragged from the header and from inside
+        // the list as well, but this is the one target that always works, even
+        // with the list scrolled.
+        Box(
+          modifier = Modifier
+            .fillMaxWidth()
+            .then(dragModifier)
+            .padding(vertical = 12.dp),
+          contentAlignment = Alignment.Center,
+        ) {
+          Box(
+            modifier = Modifier
+              .width(36.dp)
+              .height(4.dp)
+              .clip(RoundedCornerShape(2.dp))
+              .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)),
+          )
+        }
+
+        HorizontalPager(
+          state = pagerState,
+          modifier = Modifier.fillMaxWidth().weight(1f),
+        ) { page ->
+          DqtFamilyPage(
+            family = DQT_FAMILIES[page],
+            tables = tables,
+            edits = edits,
+            onValueChange = onValueChange,
+            onResetEntry = onResetEntry,
+            onResetFamily = onResetFamily,
+            onClose = onClose,
+            headerModifier = dragModifier,
+          )
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Everything of one family: its title, what it does, and its quantizer rows.
+ *
+ * [headerModifier] carries the panel drag, so the title block can be used to
+ * move the sheet - the close button rides along in the title row, where it sits
+ * next to the thing it closes.
+ */
+@Composable
+private fun DqtFamilyPage(
+  family: DqtFamily,
+  tables: List<QuantTable>,
+  edits: Map<Int, Int>,
+  onValueChange: (QuantEntry, Int) -> Unit,
+  onResetEntry: (QuantEntry) -> Unit,
+  onResetFamily: (DqtFamily) -> Unit,
+  onClose: () -> Unit,
+  headerModifier: Modifier,
 ) {
   val entries = remember(tables, family) { entriesFor(tables, family) }
   // Sections are grouped by scale - the dominant frequency of the pattern -
@@ -547,33 +927,8 @@ private fun DqtBitsPanel(
     }
   }
 
-  Surface(
-    modifier = Modifier
-      .fillMaxWidth()
-      .fillMaxHeight(DQT_PANEL_HEIGHT_FRACTION),
-    shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
-    color = MaterialTheme.colorScheme.surfaceContainerLow,
-    tonalElevation = 3.dp,
-    shadowElevation = 12.dp,
-  ) {
-    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
-      // Drag handle: the panel is not modal, so it is worth signalling that it
-      // can be pushed away again.
-      Box(
-        modifier = Modifier
-          .fillMaxWidth()
-          .padding(top = 8.dp, bottom = 6.dp),
-        contentAlignment = Alignment.Center,
-      ) {
-        Box(
-          modifier = Modifier
-            .width(36.dp)
-            .height(4.dp)
-            .clip(RoundedCornerShape(2.dp))
-            .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)),
-        )
-      }
-
+  Column(modifier = Modifier.fillMaxSize()) {
+    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).then(headerModifier)) {
       Row(verticalAlignment = Alignment.CenterVertically) {
         Column(modifier = Modifier.weight(1f)) {
           Text(
@@ -592,20 +947,19 @@ private fun DqtBitsPanel(
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
           )
+          Text(
+            text = stringResource(familyBlurbRes(family)),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+          )
         }
-        IconButton(onClick = onClose) {
+        IconButton(onClick = onClose, modifier = Modifier.align(Alignment.Top)) {
           Icon(
             imageVector = Icons.Filled.Close,
             contentDescription = stringResource(R.string.common_close),
           )
         }
       }
-
-      Text(
-        text = stringResource(familyBlurbRes(family)),
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-      )
       if (family.axis != QuantAxis.DC) {
         Text(
           text = stringResource(R.string.dqt_sheet_hint),
@@ -613,7 +967,7 @@ private fun DqtBitsPanel(
           color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
       }
-      TextButton(onClick = onResetFamily) {
+      TextButton(onClick = { onResetFamily(family) }) {
         Icon(
           imageVector = Icons.Filled.Refresh,
           contentDescription = null,
@@ -622,16 +976,17 @@ private fun DqtBitsPanel(
         Spacer(Modifier.width(6.dp))
         Text(text = stringResource(R.string.dqt_sheet_reset))
       }
+    }
 
-      LazyColumn(
-        modifier = Modifier.fillMaxWidth().weight(1f),
-        verticalArrangement = Arrangement.spacedBy(2.dp),
-      ) {
-        sections.forEach { (scale, group) ->
-          item(key = "header-$scale") {
-            Text(
-              text = if (scale == null) {
-                stringResource(R.string.dqt_section_dc)
+    LazyColumn(
+      modifier = Modifier.fillMaxWidth().weight(1f),
+      verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+      sections.forEach { (scale, group) ->
+        item(key = "header-$scale") {
+          Text(
+            text = if (scale == null) {
+              stringResource(R.string.dqt_section_dc)
               } else {
                 stringResource(
                   if (family.axis == QuantAxis.CHECKERED) {
@@ -645,7 +1000,7 @@ private fun DqtBitsPanel(
               },
               style = MaterialTheme.typography.labelLarge,
               color = MaterialTheme.colorScheme.primary,
-              modifier = Modifier.padding(top = 10.dp, bottom = 4.dp),
+              modifier = Modifier.padding(top = 10.dp, bottom = 4.dp, start = 16.dp, end = 16.dp),
             )
           }
           items(group, key = { it.offset }) { entry ->
@@ -653,7 +1008,7 @@ private fun DqtBitsPanel(
               entry = entry,
               value = edits[entry.offset] ?: entry.value,
               edited = edits.containsKey(entry.offset),
-              onToggleBit = { bit -> onToggleBit(entry, bit) },
+              onValueChange = { value -> onValueChange(entry, value) },
               onReset = { onResetEntry(entry) },
             )
           }
@@ -661,139 +1016,75 @@ private fun DqtBitsPanel(
         item { Spacer(Modifier.height(24.dp)) }
       }
     }
-  }
 }
 
 /**
- * One quantizer row: which coefficient it is, the value it has now against the
- * value in the file, and its bits as tappable cells.
+ * One quantizer in a single row: a short label, a slider over every value the
+ * byte can hold (0-255 for the usual 8-bit table), the value it is set to, and a
+ * reset button once it differs from the file.
+ *
+ * Dragging right makes the quantizer coarser - that frequency is stored more
+ * roughly and rings harder - and dragging to 0 deletes it outright, which is why
+ * the value turns red there.
  */
 @Composable
 private fun QuantizerRow(
   entry: QuantEntry,
   value: Int,
   edited: Boolean,
-  onToggleBit: (Int) -> Unit,
+  onValueChange: (Int) -> Unit,
   onReset: () -> Unit,
 ) {
-  Surface(
-    color = if (edited) {
-      MaterialTheme.colorScheme.surfaceContainerHigh
+  val maxValue = (1 shl entry.bitCount) - 1
+  Row(
+    modifier = Modifier
+      .fillMaxWidth()
+      .padding(top = 2.dp, bottom = 2.dp),
+    verticalAlignment = Alignment.CenterVertically,
+    horizontalArrangement = Arrangement.spacedBy(8.dp),
+  ) {
+    Slider(
+      value = value.toFloat(),
+      onValueChange = { onValueChange(it.roundToInt().coerceIn(0, maxValue)) },
+      valueRange = 0f..maxValue.toFloat(),
+      modifier = Modifier.weight(1f).padding(start = 16.dp),
+      colors = SliderDefaults.colors(
+        thumbColor = MaterialTheme.colorScheme.primary,
+        activeTrackColor = MaterialTheme.colorScheme.primary,
+      ),
+    )
+
+    Text(
+      text = value.toString(),
+      style = MaterialTheme.typography.labelMedium,
+      fontFamily = FontFamily.Monospace,
+      textAlign = TextAlign.End,
+      // Wide enough for a 16-bit table's five digits.
+      modifier = Modifier.width(32.dp),
+      maxLines = 1,
+      color = when {
+        value == 0 -> MaterialTheme.colorScheme.error
+        edited -> MaterialTheme.colorScheme.primary
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
+      },
+    )
+
+    if (edited) {
+      IconButton(onClick = onReset, modifier = Modifier.size(48.dp)) {
+        Icon(
+          imageVector = Icons.Filled.Refresh,
+          // Use LocalInspectionMode to provide a fallback string during Compose Previews
+          // to bypass any potential out-of-sync layoutlib/Preview cache NoSuchFieldError issues.
+          contentDescription = if (LocalInspectionMode.current) {
+            "reset to ${entry.value}"
+          } else {
+            stringResource(R.string.dqt_row_reset_to, entry.value)
+          },
+        )
+      }
     } else {
-      MaterialTheme.colorScheme.surfaceContainerLowest
-    },
-    shape = RoundedCornerShape(8.dp),
-    modifier = Modifier.fillMaxWidth(),
-  ) {
-    Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)) {
-      Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(
-          text = stringResource(R.string.dqt_row_coeff, entry.coefficient, entry.u, entry.v),
-          style = MaterialTheme.typography.labelMedium,
-          modifier = Modifier.weight(1f),
-          maxLines = 1,
-          overflow = TextOverflow.Ellipsis,
-        )
-        Text(
-          text = if (edited) {
-            stringResource(R.string.dqt_row_value_edited, entry.value, value)
-          } else {
-            stringResource(R.string.dqt_row_value, entry.value)
-          },
-          style = MaterialTheme.typography.labelMedium,
-          fontFamily = FontFamily.Monospace,
-          color = if (edited) {
-            MaterialTheme.colorScheme.primary
-          } else {
-            MaterialTheme.colorScheme.onSurfaceVariant
-          },
-        )
-        if (edited) {
-          Spacer(Modifier.width(4.dp))
-          TextButton(onClick = onReset) {
-            Text(
-              text = stringResource(R.string.dqt_row_reset),
-              style = MaterialTheme.typography.labelSmall,
-            )
-          }
-        }
-      }
-
-      Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        for (bit in 0 until entry.bitCount) {
-          BitCell(
-            bit = bit,
-            set = (value shr bit) and 1 == 1,
-            onClick = { onToggleBit(bit) },
-            modifier = Modifier.weight(1f),
-          )
-        }
-      }
-
-      Text(
-        text = if (edited) directionText(entry.value, value) else
-          stringResource(R.string.dqt_row_tap_hint),
-        style = MaterialTheme.typography.labelSmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(top = 2.dp),
-      )
-    }
-  }
-}
-
-/** What the edit did to that frequency (see DQT.md section 2). */
-@Composable
-private fun directionText(before: Int, after: Int): String = when {
-  after == 0 -> stringResource(R.string.dqt_dir_zero)
-  after > before -> stringResource(R.string.dqt_dir_coarser)
-  after < before -> stringResource(R.string.dqt_dir_finer)
-  else -> stringResource(R.string.dqt_dir_same)
-}
-
-/** One bit of a quantizer; tapping flips it. */
-@Composable
-private fun BitCell(
-  bit: Int,
-  set: Boolean,
-  onClick: () -> Unit,
-  modifier: Modifier = Modifier,
-) {
-  Box(
-    modifier = modifier
-      .height(34.dp)
-      .clip(RoundedCornerShape(6.dp))
-      .background(
-        if (set) {
-          MaterialTheme.colorScheme.primary
-        } else {
-          MaterialTheme.colorScheme.surfaceContainerHighest
-        },
-      )
-      .clickable(onClick = onClick),
-    contentAlignment = Alignment.Center,
-  ) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-      Text(
-        text = if (set) "1" else "0",
-        style = MaterialTheme.typography.labelLarge,
-        fontFamily = FontFamily.Monospace,
-        fontWeight = if (set) FontWeight.Bold else FontWeight.Normal,
-        color = if (set) {
-          MaterialTheme.colorScheme.onPrimary
-        } else {
-          MaterialTheme.colorScheme.onSurfaceVariant
-        },
-      )
-      Text(
-        text = stringResource(R.string.dqt_bit_label, bit),
-        style = MaterialTheme.typography.labelSmall,
-        color = if (set) {
-          MaterialTheme.colorScheme.onPrimary
-        } else {
-          MaterialTheme.colorScheme.onSurfaceVariant
-        },
-        textAlign = TextAlign.Center,
-      )
+      // Same footprint as the button, so the sliders stay lined up.
+      Spacer(Modifier.size(48.dp))
     }
   }
 }
@@ -837,12 +1128,14 @@ private fun DqtScreenPreviewShell(edits: Map<Int, Int>) {
   GlitchTheme {
     Surface(modifier = Modifier.fillMaxSize()) {
       DqtScreenContent(
-        preview = null,
+        // The stand-in photo other screens preview with: without it the layout
+        // falls back to the no-room-below arrangement, which is not what a real
+        // photo looks like.
+        preview = ImageBitmap.imageResource(R.drawable.example),
         tables = previewTables(),
         edits = edits,
         zoomScale = 1f,
         zoomOffset = Offset.Zero,
-        onTransform = { _, _ -> },
         onPreviewBounds = {},
         onBack = {},
         onOpenFamily = {},
@@ -871,4 +1164,97 @@ private fun DqtScreenEditedPreview() {
 @Composable
 private fun DqtScreenSmallPreview() {
   DqtScreenPreviewShell(edits = emptyMap())
+}
+
+/**
+ * The bits panel where it really sits: over the bottom of the photo, on a family
+ * with every scale. [fraction] stands in for the drag position, so the stops can
+ * be checked without a finger.
+ */
+@Composable
+private fun DqtBitsPanelPreviewShell(
+  family: DqtFamily,
+  edits: Map<Int, Int>,
+  fraction: Float = DQT_PANEL_MAX_FRACTION,
+) {
+  GlitchTheme {
+    Surface(modifier = Modifier.fillMaxSize()) {
+      Box(modifier = Modifier.fillMaxSize()) {
+        Image(
+          bitmap = ImageBitmap.imageResource(R.drawable.example),
+          contentDescription = null,
+          modifier = Modifier.fillMaxSize(),
+          contentScale = ContentScale.Crop,
+        )
+        // Bottom-aligned, the way AnimatedVisibility places it on the screen.
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
+          DqtBitsPanel(
+            family = family,
+            tables = previewTables(),
+            edits = edits,
+            onValueChange = { _, _ -> },
+            onResetEntry = {},
+            onResetFamily = {},
+            onFamilyChange = {},
+            onClose = {},
+            onBounds = {},
+            initialFraction = fraction,
+          )
+        }
+      }
+    }
+  }
+}
+
+@Preview(name = "DQT panel - checkered", device = "spec:width=411dp,height=891dp", showBackground = true)
+@Composable
+private fun DqtBitsPanelCheckeredPreview() {
+  // Offsets are into the stand-in payload: luma coefficient 4 (offset 5) set to
+  // 130, coefficient 12 (offset 13) zeroed, so both a changed row and the
+  // deleted-frequency colour show.
+  DqtBitsPanelPreviewShell(
+    family = DqtFamily(QuantAxis.CHECKERED, chroma = false,),
+    edits = mapOf(5 to 130, 13 to 0),
+  )
+}
+
+@Preview(name = "DQT panel - saturation", device = "spec:width=411dp,height=891dp", showBackground = true)
+@Composable
+private fun DqtBitsPanelDcPreview() {
+  // Chroma DC (table 1, coefficient 0) - the single-row case.
+  DqtBitsPanelPreviewShell(
+    family = DqtFamily(QuantAxis.DC, chroma = true,),
+    edits = mapOf(66 to 40),
+  )
+}
+
+@Preview(name = "DQT panel - short stop", device = "spec:width=411dp,height=891dp", showBackground = true)
+@Composable
+private fun DqtBitsPanelShortPreview() {
+  DqtBitsPanelPreviewShell(
+    family = DqtFamily(QuantAxis.VERTICAL, chroma = false,),
+    // Luma coefficient 5 (2,0) - in the vertical family, so the row shows edited.
+    edits = mapOf(6 to 34),
+    fraction = DQT_PANEL_SHORT_FRACTION,
+  )
+}
+
+@Preview(name = "DQT panel - max height", device = "spec:width=411dp,height=891dp", showBackground = true)
+@Composable
+private fun DqtBitsPanelMaxPreview() {
+  DqtBitsPanelPreviewShell(
+    family = DqtFamily(QuantAxis.HORIZONTAL, chroma = true,),
+    // Chroma coefficient 2 (0,1) - the first horizontal row of the chroma table.
+    edits = mapOf(68 to 96),
+    fraction = DQT_PANEL_MAX_FRACTION,
+  )
+}
+
+@Preview(name = "DQT panel - small screen", device = "spec:width=320dp,height=568dp", showBackground = true)
+@Composable
+private fun DqtBitsPanelSmallPreview() {
+  DqtBitsPanelPreviewShell(
+    family = DqtFamily(QuantAxis.HORIZONTAL, chroma = false,),
+    edits = mapOf(3 to 19),
+  )
 }

@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   width="512"
+   height="512"
+   viewBox="0 0 512 512"
+   version="1.1"
+   id="svg51"
+   sodipodi:docname="vertical.svg"
+   inkscape:version="1.4 (86a8ad7, 2024-10-11)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <defs
+     id="defs51" />
+  <sodipodi:namedview
+     id="namedview51"
+     pagecolor="#d1d1d1"
+     bordercolor="#000000"
+     borderopacity="0.27843137"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="false"
+     inkscape:deskcolor="#ffffff"
+     inkscape:zoom="2.5066383"
+     inkscape:cx="188.10053"
+     inkscape:cy="213.03432"
+     inkscape:window-width="2548"
+     inkscape:window-height="2041"
+     inkscape:window-x="2555"
+     inkscape:window-y="0"
+     inkscape:window-maximized="0"
+     inkscape:current-layer="svg51"
+     showgrid="true"
+     showborder="true">
+    <inkscape:grid
+       id="grid4"
+       units="px"
+       originx="0"
+       originy="0"
+       spacingx="1"
+       spacingy="1"
+       empcolor="#0099e5"
+       empopacity="0.30196078"
+       color="#0099e5"
+       opacity="0.14901961"
+       empspacing="1"
+       enabled="true"
+       visible="true"
+       dotted="true" />
+  </sodipodi:namedview>
+  <rect
+     style="fill:#000000;fill-opacity:1;stroke-width:0;stroke-linecap:round"
+     id="rect1"
+     width="116"
+     height="512"
+     x="-512"
+     y="-512"
+     rx="15.466667"
+     ry="16"
+     transform="scale(-1)" />
+  <rect
+     style="fill:#ffffff;fill-opacity:1;stroke-width:0;stroke-linecap:round"
+     id="rect2"
+     width="116"
+     height="512"
+     x="-380"
+     y="-512"
+     rx="15.466666"
+     ry="16"
+     transform="scale(-1)" />
+  <rect
+     style="fill:#000000;fill-opacity:1;stroke-width:0;stroke-linecap:round"
+     id="rect3"
+     width="116"
+     height="512"
+     x="-248"
+     y="-512"
+     rx="15.466666"
+     ry="16"
+     transform="scale(-1)" />
+  <rect
+     style="fill:#ffffff;fill-opacity:1;stroke-width:0;stroke-linecap:round"
+     id="rect4"
+     width="116"
+     height="512"
+     x="-116"
+     y="-512"
+     rx="15.466666"
+     ry="16"
+     transform="scale(-1)" />
+</svg>
