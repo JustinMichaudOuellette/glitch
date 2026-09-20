@@ -56,7 +56,12 @@ class HuffmanCensus internal constructor(
   /** Times the code owned by [symbol] was decoded. */
   fun uses(symbol: HuffmanSymbol): Int = uses(symbol.tableClass, symbol.tableId, symbol.index)
 
-  private fun uses(tableClass: Int, tableId: Int, index: Int): Int =
+  /**
+   * Times the code owned by [index] of the table with that class and id was
+   * decoded. The form the screen uses: a classified edit names its table and
+   * symbol but holds no [HuffmanSymbol].
+   */
+  fun uses(tableClass: Int, tableId: Int, index: Int): Int =
     uses[tableKey(tableClass, tableId)]?.getOrNull(index) ?: 0
 
   /** How many 8x8 blocks are coded with [table], summed over the components using it. */

@@ -93,6 +93,15 @@ class HuffmanTable(
   val tableId: Int,
   /** Offset of the information byte (Tc/Th), which is never safe to edit. */
   val specOffset: Int,
+  /**
+   * Index of that spec byte inside the concatenated DHT payload.
+   *
+   * The sweep in `DHT.md` numbered its bits along that concatenation, so this
+   * is what turns a symbol into `DhtSweep`'s bit index - and it only lines up
+   * when the file's tables are laid out the way the swept files were, which is
+   * why [DhtSweep.appliesTo] compares whole payloads.
+   */
+  val payloadIndex: Int,
   /** The 16 code-length counts, BITS[1..16]. Editing any of them breaks the file. */
   val counts: IntArray,
   val entries: List<HuffmanSymbol>,
@@ -141,6 +150,9 @@ object HuffmanTables {
   fun parse(data: ByteArray, structure: JpegStructure): List<HuffmanTable> {
     val (lumaDc, lumaAc) = lumaTableIds(structure)
     val tables = ArrayList<HuffmanTable>(4)
+    // Running index into the concatenated payload, which is how the sweep in
+    // DHT.md numbered the bits it flipped.
+    var payloadIndex = 0
     for (span in structure.dht) {
       var p = span.start
       while (p + 17 <= span.endExclusive) {
@@ -180,15 +192,38 @@ object HuffmanTables {
             tableClass = tableClass,
             tableId = tableId,
             specOffset = p,
+            payloadIndex = payloadIndex,
             counts = counts,
             entries = entries,
             isChroma = tableId != if (tableClass == 0) lumaDc else lumaAc,
           ),
         )
         p += 17 + symbols
+        payloadIndex += 17 + symbols
       }
+      // A segment that ended early (a malformed table) still occupies its bytes.
+      payloadIndex += span.endExclusive - p
     }
     return tables
+  }
+
+  /**
+   * The DHT payload of [data]: every segment's payload bytes, concatenated in
+   * file order. This is the byte string the `b_x4` sweep walked, so comparing it
+   * with [DhtSweep.BASELINE] is how the screen knows whether the classification
+   * describes this file.
+   */
+  fun payloadOf(data: ByteArray, structure: JpegStructure): ByteArray {
+    var size = 0
+    for (span in structure.dht) size += span.size
+    val out = ByteArray(size)
+    var at = 0
+    for (span in structure.dht) {
+      for (offset in span.start until span.endExclusive) {
+        out[at++] = if (offset in data.indices) data[offset] else 0
+      }
+    }
+    return out
   }
 
   /**

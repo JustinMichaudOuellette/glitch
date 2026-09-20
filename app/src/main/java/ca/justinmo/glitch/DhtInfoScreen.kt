@@ -69,7 +69,33 @@ internal fun DhtInfoScreen(
     InfoSection(
       title = stringResource(R.string.dht_info_odds_title),
       body = stringResource(R.string.dht_info_odds_body),
-    )
+    ) {
+      Spacer(Modifier.height(12.dp))
+      TierBar()
+      Spacer(Modifier.height(6.dp))
+      Text(
+        text = stringResource(R.string.dht_info_tiers_caption),
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+      )
+    }
+    InfoSection(
+      title = stringResource(R.string.dht_info_sweep_title),
+      body = stringResource(R.string.dht_info_sweep_body),
+    ) {
+      Spacer(Modifier.height(6.dp))
+      Text(
+        text = stringResource(R.string.dht_info_sweep_caveat),
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+      )
+      Spacer(Modifier.height(6.dp))
+      Text(
+        text = stringResource(R.string.dht_info_sweep_hidden),
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+      )
+    }
     InfoSection(
       title = stringResource(R.string.dht_info_book_title),
       body = stringResource(R.string.dht_info_book_body),
@@ -79,19 +105,6 @@ internal fun DhtInfoScreen(
       Spacer(Modifier.height(6.dp))
       Text(
         text = stringResource(R.string.dht_info_book_caption),
-        style = MaterialTheme.typography.labelSmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-      )
-    }
-    InfoSection(
-      title = stringResource(R.string.dht_info_tiers_title),
-      body = stringResource(R.string.dht_info_tiers_body),
-    ) {
-      Spacer(Modifier.height(10.dp))
-      TierBar()
-      Spacer(Modifier.height(6.dp))
-      Text(
-        text = stringResource(R.string.dht_info_tiers_caption),
         style = MaterialTheme.typography.labelSmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
       )
@@ -322,10 +335,10 @@ private fun TierBar() {
       .height(16.dp)
       .clip(RoundedCornerShape(8.dp)),
   ) {
-    // 211 usable, 629 destructive, out of the 2784 edits the region offers.
+    // 211 usable, 1856 that changed nothing, 631 wrecks - the sweep's tally.
     Box(modifier = Modifier.weight(211f).fillMaxSize().background(touch))
-    Box(modifier = Modifier.weight(1848f).fillMaxSize().background(track))
-    Box(modifier = Modifier.weight(629f).fillMaxSize().background(rewrite))
+    Box(modifier = Modifier.weight(1856f).fillMaxSize().background(track))
+    Box(modifier = Modifier.weight(631f).fillMaxSize().background(rewrite))
   }
   Spacer(Modifier.height(8.dp))
   LegendDot(color = touch, text = stringResource(R.string.dht_info_tiers_keep))
