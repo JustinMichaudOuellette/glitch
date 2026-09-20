@@ -234,7 +234,7 @@ private fun sizeText(entries: List<QuantEntry>): String {
 }
 
 /**
- * Zoom and pan for the whole screen.
+ * Zoom and pan for a screen whose preview has controls drawn over it.
  *
  * The other screens put `transformable` on the image, which works because
  * nothing sits on top of it. Here the pattern row is drawn *over* the photo and
@@ -247,8 +247,11 @@ private fun sizeText(entries: List<QuantEntry>): String {
  * * **one finger** pans only when the gesture starts on the photo and outside
  *   the panel, so the panel's list still scrolls and its buttons still tap. A
  *   tap is never consumed, because panning only starts past the touch slop.
+ *
+ * Shared with the DHT screen, which lays its tiles and its panel out the same
+ * way and wants the same rules.
  */
-private fun Modifier.dqtTransformGestures(
+internal fun Modifier.previewTransformGestures(
   previewBoundsProvider: () -> Rect?,
   panelBoundsProvider: () -> Rect?,
   onTransform: (zoomChange: Float, panChange: Offset) -> Unit,
@@ -380,7 +383,7 @@ internal fun DqtScreen(
         if (showInfo) {
           Modifier
         } else {
-          Modifier.dqtTransformGestures(
+          Modifier.previewTransformGestures(
             // Read through the state holders, so the bounds are current whenever
             // a gesture arrives (this lambda is captured once, the values are not).
             previewBoundsProvider = {
@@ -1185,9 +1188,12 @@ private val NUMBER_PICKER_HEIGHT = 112.dp
  *
  * Draws nothing in a Compose preview: `AndroidView` needs a real Android context,
  * so the previews show a stand-in of the wheel instead.
+ *
+ * Shared with the DHT screen, whose DC symbol rows are the same kind of control:
+ * one number that *is* the effect.
  */
 @Composable
-private fun NumberPickerCell(
+internal fun NumberPickerCell(
   value: Int,
   maxValue: Int,
   textColor: Color,

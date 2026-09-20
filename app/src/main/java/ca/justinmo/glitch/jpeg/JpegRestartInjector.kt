@@ -314,16 +314,32 @@ internal class HuffmanCodes(counts: IntArray, val symbols: IntArray) {
  * rather than silently reading into the next marker.
  */
 internal class BitReader(private val data: ByteArray, start: Int, private val end: Int) {
+  private val begin = start
   private var pos = start
   private var acc = 0
   private var bitsLeft = 0
+
+  /** Bytes consumed since the start of the span, for a caller checking the walk. */
+  val bytesRead: Int get() = pos - begin
+
+  /**
+   * True once a read ran past the end of the span. Inside a scan range the only
+   * real marker is the one that terminates it, so hitting the end means the walk
+   * lost the stream rather than finishing it - which is how the DHT screen's
+   * code census knows its counts can no longer be trusted.
+   */
+  var exhausted = false
+    private set
 
   init {
     require(start in 0..end && end <= data.size) { "bad scan range [$start,$end)" }
   }
 
   private fun nextByte(): Int {
-    if (pos >= end) return -1
+    if (pos >= end) {
+      exhausted = true
+      return -1
+    }
     val b = data[pos].toInt() and 0xFF
     pos++
     if (b == 0xFF) {
