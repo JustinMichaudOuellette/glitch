@@ -237,6 +237,13 @@
     <string name="dht_length_common">common</string>
     <string name="dht_length_occasional">occasional</string>
     <string name="dht_length_rarest">the rarest, if they appear at all</string>
+    <string name="dht_strip_legend">Each cell under a row is one bit of its value, coloured by your own sweep of b, e, f and g: grey changed nothing, green is one you kept, red one you filed as a wreck. Tap a cell to flip that bit.</string>
+    <string name="dht_strip_unavailable">These tables are not the ones your sweep measured, so the cells cannot be coloured. The sliders still work.</string>
+    <string name="dht_flip_cell">Bit %1$d: %2$s becomes %3$s. %4$s</string>
+    <string name="dht_flip_nothing">Your sweep found no visible change on the four photos.</string>
+    <string name="dht_flip_kept">Your sweep kept this: it changed %1$d of the four photos.</string>
+    <string name="dht_flip_wreck">Your sweep called this a wreck: it changed %1$d of the four photos.</string>
+    <string name="dht_flip_fatal">Your sweep has no sample: this flip stops the file decoding.</string>
     <string name="dht_row_label">#%1$d - %2$d-bit code - %3$s</string>
     <string name="dht_row_needs">needs %1$d bits</string>
     <string name="dht_row_uses">used %1$s times</string>

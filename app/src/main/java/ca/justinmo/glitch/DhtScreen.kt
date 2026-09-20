@@ -10,6 +10,7 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
@@ -95,6 +96,9 @@ import ca.justinmo.glitch.jpeg.HuffmanSymbol
 import ca.justinmo.glitch.jpeg.HuffmanTable
 import ca.justinmo.glitch.jpeg.HuffmanTables
 import ca.justinmo.glitch.jpeg.JpegParser
+import ca.justinmo.glitch.jpeg.SweepEdit
+import ca.justinmo.glitch.jpeg.SweepOutcome
+import ca.justinmo.glitch.jpeg.DhtSweep
 import ca.justinmo.glitch.ui.theme.GlitchTheme
 import java.util.Locale
 import kotlin.math.roundToInt
@@ -233,6 +237,15 @@ internal fun DhtScreen(
     if (edits.isEmpty()) bytes else bytes.copyOf().also { HuffmanTables.applyValues(it, edits) }
   }
 
+  // The classification from the b_x4 sweep, by the symbol byte it belongs to:
+  // eight measured bit flips per code, which the rows draw as a strip.
+  val classified = remember(bytes, structure) {
+    DhtSweep.appliesTo(HuffmanTables.payloadOf(bytes, structure))
+  }
+  val flips = remember(tables, classified) {
+    if (classified) DhtSweep.editsFor(tables).groupBy { it.offset } else emptyMap()
+  }
+
   LaunchedEffect(applied) {
     val decoded = withContext(Dispatchers.Default) { decodeSampled(applied, DHT_PREVIEW_CAP_PX) }
     preview = decoded
@@ -298,6 +311,8 @@ internal fun DhtScreen(
       preview = preview?.asImageBitmap(),
       tables = tables,
       edits = edits,
+      flips = flips,
+      classified = classified,
       brokenEdit = previewBroken,
       zoomScale = scale,
       zoomOffset = offset,
@@ -328,6 +343,8 @@ internal fun DhtScreen(
             family = family,
             tables = tables,
             edits = edits,
+            flips = flips,
+            classified = classified,
             census = census,
             censusBlock = censusBlock,
             onlyUsed = onlyUsed,
@@ -372,6 +389,8 @@ internal fun DhtScreenContent(
   preview: ImageBitmap?,
   tables: List<HuffmanTable>,
   edits: Map<Int, Int>,
+  flips: Map<Int, List<SweepEdit>>,
+  classified: Boolean,
   zoomScale: Float,
   zoomOffset: Offset,
   onPreviewBounds: (Rect) -> Unit,
@@ -714,6 +733,8 @@ private fun DhtTablePanel(
   family: DhtFamily,
   tables: List<HuffmanTable>,
   edits: Map<Int, Int>,
+  flips: Map<Int, List<SweepEdit>>,
+  classified: Boolean,
   census: HuffmanCensus?,
   censusBlock: CensusBlock?,
   onlyUsed: Boolean,
@@ -873,6 +894,8 @@ private fun DhtTablePanel(
               family = pageFamily,
               table = pageTable,
               edits = edits,
+              flips = flips,
+              classified = classified,
               census = census,
               censusBlock = censusBlock,
               onlyUsed = onlyUsed,
@@ -899,6 +922,8 @@ private fun DhtTablePage(
   family: DhtFamily,
   table: HuffmanTable,
   edits: Map<Int, Int>,
+  flips: Map<Int, List<SweepEdit>>,
+  classified: Boolean,
   census: HuffmanCensus?,
   censusBlock: CensusBlock?,
   onlyUsed: Boolean,
@@ -957,6 +982,21 @@ private fun DhtTablePage(
         style = MaterialTheme.typography.labelSmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
       )
+      // What the strip under each row is. Said once, here, rather than repeated
+      // on every row.
+      if (classified) {
+        Text(
+          text = stringResource(R.string.dht_strip_legend),
+          style = MaterialTheme.typography.labelSmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+      } else {
+        Text(
+          text = stringResource(R.string.dht_strip_unavailable),
+          style = MaterialTheme.typography.labelSmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+      }
       Text(
         text = stringResource(
           if (table.isAc) R.string.dht_sheet_hint_ac else R.string.dht_sheet_hint_dc
@@ -1014,6 +1054,7 @@ private fun DhtTablePage(
             value = edits[symbol.offset] ?: symbol.value,
             edited = edits.containsKey(symbol.offset),
             uses = census?.uses(symbol),
+            flips = flips[symbol.offset].orEmpty(),
             onValueChange = { value -> onValueChange(symbol, value) },
             onReset = { onResetSymbol(symbol) },
           )
@@ -1071,6 +1112,12 @@ private fun formatUses(uses: Int): String = when {
  * One symbol in a single row: what the code means, how often the photo uses it,
  * and a control over the whole value the symbol byte can take.
  *
+ * Under the control sits [DhtBitStrip]: one cell per bit of the value, coloured
+ * by what the `b_x4` sweep measured for that flip. The slider is the continuous
+ * control and the strip is the measured one - the two answers to "what should
+ * this byte be?", side by side, which is what earlier versions of this screen
+ * got wrong by offering only one of them.
+ *
  * The AC tables get a [Slider] over 0-255 - dragging it sweeps the magnitude
  * nibble first and then the run nibble, so the fine control is the one that
  * changes the picture most - and the label above it spells out the pair the
@@ -1084,6 +1131,7 @@ private fun DhtSymbolRow(
   value: Int,
   edited: Boolean,
   uses: Int?,
+  flips: List<SweepEdit>,
   onValueChange: (Int) -> Unit,
   onReset: () -> Unit,
 ) {
@@ -1108,11 +1156,14 @@ private fun DhtSymbolRow(
     stringResource(R.string.dht_row_picker_label, symbol.index, value)
   }
 
-  Row(
+  Column(
     modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 4.dp),
-    verticalAlignment = Alignment.CenterVertically,
   ) {
-    Column(modifier = Modifier.weight(1f)) {
+    Row(
+      modifier = Modifier.fillMaxWidth(),
+      verticalAlignment = Alignment.CenterVertically,
+    ) {
+      Column(modifier = Modifier.weight(1f)) {
       Text(
         text = rowLabel,
         style = MaterialTheme.typography.bodyMedium,
@@ -1172,22 +1223,131 @@ private fun DhtSymbolRow(
       }
     }
 
-    if (edited) {
-      IconButton(onClick = onReset, modifier = Modifier.size(40.dp)) {
-        Icon(
-          imageVector = Icons.Filled.Refresh,
-          contentDescription = if (LocalInspectionMode.current) {
-            "reset to ${symbol.value}"
-          } else {
-            stringResource(R.string.dht_row_reset_to, symbol.value)
-          },
-        )
+      if (edited) {
+        IconButton(onClick = onReset, modifier = Modifier.size(40.dp)) {
+          Icon(
+            imageVector = Icons.Filled.Refresh,
+            contentDescription = if (LocalInspectionMode.current) {
+              "reset to ${symbol.value}"
+            } else {
+              stringResource(R.string.dht_row_reset_to, symbol.value)
+            },
+          )
+        }
+      } else {
+        // Same footprint as the button, so the controls stay lined up.
+        Spacer(Modifier.size(40.dp))
       }
-    } else {
-      // Same footprint as the button, so the controls stay lined up.
-      Spacer(Modifier.size(40.dp))
+    }
+
+    if (flips.isNotEmpty()) {
+      DhtBitStrip(
+        flips = flips,
+        current = value,
+        onFlip = onValueChange,
+        modifier = Modifier.padding(start = 4.dp, end = 40.dp, top = 2.dp, bottom = 4.dp),
+      )
     }
   }
+}
+
+/**
+ * One cell per bit of the value byte, in bit order, coloured by what the `b_x4`
+ * sweep measured when it flipped that bit in the four sample photos.
+ *
+ * This is the whole point of the strip: the sweep's classification covers every
+ * one of the 3328 bits, and a user editing a number cannot be expected to hold
+ * that in their head - or to reach for a bit index. Here it sits on the row it
+ * belongs to, one tap away from the edit it describes.
+ *
+ * Grey changed nothing on those photos, green was filed as a change worth
+ * keeping, red was filed as a wreck, and the darker reds wrecked more of the
+ * four. A cell the sweep has no sample for (the flip stops the file decoding)
+ * is drawn dim and cannot be tapped, because there is no picture behind it.
+ *
+ * Nothing here is hidden or blocked: red cells still apply. The classification
+ * is evidence from four photos, not a verdict on this one, and the edit someone
+ * likes has been known to live in the red.
+ */
+@Composable
+private fun DhtBitStrip(
+  flips: List<SweepEdit>,
+  current: Int,
+  onFlip: (Int) -> Unit,
+  modifier: Modifier = Modifier,
+) {
+  Row(
+    modifier = modifier.fillMaxWidth().height(22.dp),
+    horizontalArrangement = Arrangement.spacedBy(4.dp),
+  ) {
+    flips.sortedBy { it.bit }.forEach { flip ->
+      val fatal = flip.outcome == SweepOutcome.FATAL
+      val applied = current == flip.to
+      // Read before the semantics block, which is not a composable scope.
+      val description = flipDescription(flip)
+      Box(
+        modifier = Modifier
+          .weight(1f)
+          .fillMaxSize()
+          .clip(RoundedCornerShape(4.dp))
+          .background(flipCellColor(flip.outcome))
+          .then(
+            if (applied) {
+              Modifier.border(
+                width = 2.dp,
+                color = MaterialTheme.colorScheme.onSurface,
+                shape = RoundedCornerShape(4.dp),
+              )
+            } else {
+              Modifier
+            },
+          )
+          .then(
+            if (fatal) {
+              Modifier
+            } else {
+              Modifier.clickable { onFlip(flip.to) }
+            },
+          )
+          .semantics {
+            contentDescription = description
+          },
+      )
+    }
+  }
+}
+
+/** The colour of one strip cell: what the sweep filed that flip as. */
+@Composable
+private fun flipCellColor(outcome: SweepOutcome): androidx.compose.ui.graphics.Color {
+  val base = when {
+    outcome == SweepOutcome.FATAL -> MaterialTheme.colorScheme.surfaceContainerHighest
+    outcome == SweepOutcome.NOTHING -> MaterialTheme.colorScheme.surfaceContainerHighest
+    outcome.isWreck -> MaterialTheme.colorScheme.error
+    else -> MaterialTheme.colorScheme.primary
+  }
+  // How many of the four photos it changed, as opacity: a flip that moved all
+  // four is solid, one that moved a single photo is faint.
+  val alpha = when {
+    outcome == SweepOutcome.FATAL -> 0.35f
+    outcome == SweepOutcome.NOTHING -> 0.55f
+    else -> 0.35f + 0.16f * outcome.photosChanged
+  }
+  return base.copy(alpha = alpha)
+}
+
+/** What a strip cell says to a screen reader, and to the user on a long press. */
+@Composable
+private fun flipDescription(flip: SweepEdit): String {
+  val outcome = when {
+    flip.outcome == SweepOutcome.FATAL -> stringResource(R.string.dht_flip_fatal)
+    flip.outcome == SweepOutcome.NOTHING -> stringResource(R.string.dht_flip_nothing)
+    flip.outcome.isWreck -> stringResource(R.string.dht_flip_wreck, flip.outcome.photosChanged)
+    else -> stringResource(R.string.dht_flip_kept, flip.outcome.photosChanged)
+  }
+  val from = if (flip.isDc) stringResource(R.string.dht_row_needs, flip.from) else meaningOf(flip.from)
+  val to = if (flip.isDc) stringResource(R.string.dht_row_needs, flip.to) else meaningOf(flip.to)
+  return stringResource(R.string.dht_flip_cell, flip.bit, from, to, outcome)
 }
 
 /**
@@ -1216,7 +1376,17 @@ private fun previewTables(): List<HuffmanTable> {
   val entries = (0 until symbolCount).map { i ->
     HuffmanSymbol(1, 0, i, 17 + i, 9, data)
   }
-  return listOf(HuffmanTable(1, 0, 0, counts, entries, isChroma = false))
+  return listOf(
+    HuffmanTable(
+      tableClass = 1,
+      tableId = 0,
+      specOffset = 0,
+      payloadIndex = 29,
+      counts = counts,
+      entries = entries,
+      isChroma = false,
+    ),
+  )
 }
 
 @Preview(name = "DHT", device = "spec:width=411dp,height=891dp", showBackground = true)
@@ -1228,6 +1398,8 @@ private fun DhtScreenPreview() {
         preview = previewImageBitmap(),
         tables = previewTables(),
         edits = emptyMap(),
+        flips = emptyMap(),
+        classified = false,
         zoomScale = 1f,
         zoomOffset = Offset.Zero,
         onPreviewBounds = {},
@@ -1252,6 +1424,8 @@ private fun DhtScreenEditedPreview() {
         preview = previewImageBitmap(),
         tables = tables,
         edits = mapOf(tables.first().entries[2].offset to 8),
+        flips = emptyMap(),
+        classified = false,
         zoomScale = 1f,
         zoomOffset = Offset.Zero,
         onPreviewBounds = {},

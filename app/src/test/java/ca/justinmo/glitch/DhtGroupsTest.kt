@@ -36,7 +36,15 @@ class DhtGroupsTest {
     val entries = values.indices.map { i ->
       HuffmanSymbol(1, 0, i, 17 + i, lengths[i], data)
     }
-    return HuffmanTable(1, 0, 0, intArrayOf(0, 2, 1, 3, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1), entries, false)
+    return HuffmanTable(
+      tableClass = 1,
+      tableId = 0,
+      specOffset = 0,
+      payloadIndex = 29,
+      counts = intArrayOf(0, 2, 1, 3, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1),
+      entries = entries,
+      isChroma = false,
+    )
   }
 
   @Test
