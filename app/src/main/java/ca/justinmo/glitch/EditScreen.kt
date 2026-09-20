@@ -61,6 +61,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import ca.justinmo.glitch.PreviewUtil.previewImageBitmap
 import ca.justinmo.glitch.jpeg.ByteSpan
 import ca.justinmo.glitch.jpeg.ByteSpans
 import ca.justinmo.glitch.jpeg.ComponentSampling
@@ -793,7 +794,7 @@ private fun previewEditState(
   readout: String? = null,
   error: String? = null,
   flips: Int = 0,
-): EditUiState = EditUiState(structure, ImageBitmap.imageResource(R.drawable.example), region, 0, 0.5f, 0.125f, readout, error, flips, flips > 0, false, false, false, 1f, Offset.Zero, null)
+): EditUiState = EditUiState(structure, previewImageBitmap(), region, 0, 0.5f, 0.125f, readout, error, flips, flips > 0, false, false, false, 1f, Offset.Zero, null)
 
 @Composable
 private fun EditScreenPreviewShell(state: EditUiState) {

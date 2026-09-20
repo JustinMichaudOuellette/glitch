@@ -42,6 +42,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.systemGestureExclusion
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ArrowDropDown
@@ -105,6 +106,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import ca.justinmo.glitch.PreviewUtil.previewImageBitmap
 import ca.justinmo.glitch.jpeg.ByteSpan
 import ca.justinmo.glitch.jpeg.JpegParser
 import ca.justinmo.glitch.jpeg.JpegStructure
@@ -921,7 +923,7 @@ private fun DqtBitsPanel(
             onResetEntry = onResetEntry,
             onResetFamily = onResetFamily,
             onClose = onClose,
-            headerModifier = dragModifier,
+            modifier = dragModifier,
           )
         }
       }
@@ -932,7 +934,7 @@ private fun DqtBitsPanel(
 /**
  * Everything of one family: its title, what it does, and its quantizer rows.
  *
- * [headerModifier] carries the panel drag, so the title block can be used to
+ * [modifier] carries the panel drag, so the title block can be used to
  * move the sheet - the close button rides along in the title row, where it sits
  * next to the thing it closes.
  */
@@ -945,7 +947,7 @@ private fun DqtFamilyPage(
   onResetEntry: (QuantEntry) -> Unit,
   onResetFamily: (DqtFamily) -> Unit,
   onClose: () -> Unit,
-  headerModifier: Modifier,
+  modifier: Modifier,
 ) {
   val entries = remember(tables, family) { entriesFor(tables, family) }
   // Sections are grouped by scale - the dominant frequency of the pattern -
@@ -961,7 +963,7 @@ private fun DqtFamilyPage(
   }
 
   Column(modifier = Modifier.fillMaxSize()) {
-    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).then(headerModifier)) {
+    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).then(modifier)) {
       Row(verticalAlignment = Alignment.CenterVertically) {
         Column(modifier = Modifier.weight(1f)) {
           Text(
@@ -1123,7 +1125,7 @@ private fun QuantizerRow(
         value = value.toFloat(),
         onValueChange = { onValueChange(it.roundToInt().coerceIn(0, maxValue)) },
         valueRange = 0f..maxValue.toFloat(),
-        modifier = Modifier.weight(1f).padding(start = 16.dp),
+        modifier = Modifier.weight(1f).padding(start = 16.dp).systemGestureExclusion(),
         colors = SliderDefaults.colors(
           thumbColor = MaterialTheme.colorScheme.primary,
           activeTrackColor = MaterialTheme.colorScheme.primary,
@@ -1360,7 +1362,7 @@ private fun DqtScreenPreviewShell(edits: Map<Int, Int>) {
         // The stand-in photo other screens preview with: without it the layout
         // falls back to the no-room-below arrangement, which is not what a real
         // photo looks like.
-        preview = ImageBitmap.imageResource(R.drawable.example),
+        preview = previewImageBitmap(),
         tables = previewTables(),
         edits = edits,
         zoomScale = 1f,
@@ -1411,7 +1413,7 @@ private fun DqtBitsPanelPreviewShell(
     Surface(modifier = Modifier.fillMaxSize()) {
       Box(modifier = Modifier.fillMaxSize()) {
         Image(
-          bitmap = ImageBitmap.imageResource(R.drawable.example),
+          bitmap = previewImageBitmap(),
           contentDescription = null,
           modifier = Modifier.fillMaxSize(),
           contentScale = ContentScale.Crop,
@@ -1503,8 +1505,8 @@ private fun DqtBitsPanelPickerPreview() {
 
 /**
  * The quantizer rows on their own, where the two controls can be compared at a
- * size that shows their colours: the picker at rest, changed and zeroed - the
- * three states every row shares - each with the faded neighbours the wheel draws
+ * size that shows their colors: the picker at rest, changed and zeroed - the
+ * three states every row shares - each with the faded neighbors the wheel draws
  * around the selected value; then slider rows, which are the only ones that carry
  * a reset button.
  */

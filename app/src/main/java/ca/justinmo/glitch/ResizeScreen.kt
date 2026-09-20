@@ -59,6 +59,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import ca.justinmo.glitch.PreviewUtil.previewImageBitmap
 import ca.justinmo.glitch.ui.theme.GlitchTheme
 import kotlin.math.abs
 import kotlin.math.max
@@ -572,7 +573,7 @@ private fun ResizeScreenPreviewShell(
   GlitchTheme {
     Surface(modifier = Modifier.fillMaxSize()) {
       ResizeScreenContent(
-        preview = ImageBitmap.imageResource(R.drawable.example),
+        preview = previewImageBitmap(),
         resolution = 4032 to 3024,
         targetSize = targetSize,
         cropForStories = cropForStories,

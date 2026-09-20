@@ -50,6 +50,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
+import ca.justinmo.glitch.PreviewUtil.previewImageBitmap
 import ca.justinmo.glitch.ui.theme.GlitchTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -370,7 +371,7 @@ private fun SourceControls(
 @Composable
 private fun BoxScope.SampleBackdrop(contentScale: ContentScale) {
   Image(
-    painter = painterResource(R.drawable.example), // res/drawable/example.webp
+    bitmap = previewImageBitmap(), // res/drawable/example.webp
     contentDescription = null,
     modifier = Modifier.fillMaxSize(),
     contentScale = contentScale,
