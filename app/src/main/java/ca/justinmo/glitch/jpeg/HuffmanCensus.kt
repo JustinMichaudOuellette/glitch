@@ -41,6 +41,7 @@ enum class CensusBlock {
  */
 class HuffmanCensus internal constructor(
   private val uses: Map<Int, IntArray>,
+  private val tableBlocks: Map<Int, Int>,
   /** Codes decoded across the whole scan. */
   val symbolsRead: Int,
   /** 8x8 blocks walked. */
@@ -58,6 +59,39 @@ class HuffmanCensus internal constructor(
   private fun uses(tableClass: Int, tableId: Int, index: Int): Int =
     uses[tableKey(tableClass, tableId)]?.getOrNull(index) ?: 0
 
+  /** How many 8x8 blocks are coded with [table], summed over the components using it. */
+  fun blocksUsing(table: HuffmanTable): Int =
+    tableBlocks[tableKey(table.tableClass, table.tableId)] ?: 0
+
+  /**
+   * Share of [table]'s blocks whose code stream contains [index]'s code, 0 to 1.
+   *
+   * This is the screen's prediction of how far an edit reaches: a code that
+   * occurs in a twentieth of the blocks is a touch-up, one that occurs in two
+   * thirds of them rewrites the picture. It is not a guess - the census counted
+   * the occurrences - and it is the axis the panel is ordered by, because
+   * `DHT.md` measured that the sample batch's destructive edits are its
+   * frequently-used codes (96% of AC luma's first 32 symbols were `bad`).
+   */
+  fun impact(table: HuffmanTable, index: Int): Float {
+    val total = blocksUsing(table)
+    if (total <= 0) return 0f
+    return (uses(table, index).toFloat() / total).coerceIn(0f, 1f)
+  }
+
+  /** [impact] of a parsed symbol. */
+  fun impact(symbol: HuffmanSymbol): Float = impact(
+    tableClass = symbol.tableClass,
+    tableId = symbol.tableId,
+    index = symbol.index,
+  )
+
+  private fun impact(tableClass: Int, tableId: Int, index: Int): Float {
+    val total = tableBlocks[tableKey(tableClass, tableId)] ?: 0
+    if (total <= 0) return 0f
+    return (uses(tableClass, tableId, index).toFloat() / total).coerceIn(0f, 1f)
+  }
+
   /** How many of [table]'s symbols occur at least once. */
   fun usedSymbolCount(table: HuffmanTable): Int {
     val counts = uses[tableKey(table.tableClass, table.tableId)] ?: return 0
@@ -65,6 +99,10 @@ class HuffmanCensus internal constructor(
     for (value in counts) if (value > 0) n++
     return n
   }
+
+  /** How many of [table]'s symbols reach at least [fraction] of its blocks. */
+  fun symbolsAbove(table: HuffmanTable, fraction: Float): Int =
+    table.entries.count { impact(table, it.index) >= fraction }
 
   override fun toString(): String =
     "HuffmanCensus($symbolsRead codes over $blocks blocks, ${uses.size} table(s))"
@@ -149,11 +187,21 @@ object HuffmanCensusReader {
     for (table in tables) {
       tally[tableKey(table.tableClass, table.tableId)] = IntArray(table.symbolCount)
     }
+    val totalMcus = frame.mcusPerRow * frame.mcuRows
+    // How many blocks each table codes, which turns a raw occurrence count into
+    // the share of the picture an edit reaches.
+    val perMcuByTable = HashMap<Int, Int>(4)
+    for (plan in plans) {
+      val perMcu = plan.h * plan.v
+      perMcuByTable[plan.dcKey] = (perMcuByTable[plan.dcKey] ?: 0) + perMcu
+      perMcuByTable[plan.acKey] = (perMcuByTable[plan.acKey] ?: 0) + perMcu
+    }
+    val blocksPerTable = HashMap<Int, Int>(perMcuByTable.size)
+    for ((key, perMcu) in perMcuByTable) blocksPerTable[key] = perMcu * totalMcus
 
     var read = 0
     var blocks = 0
     val reader = BitReader(data, scan.start, scan.endExclusive)
-    val totalMcus = frame.mcusPerRow * frame.mcuRows
     for (mcu in 0 until totalMcus) {
       for (plan in plans) {
         repeat(plan.h * plan.v) {
@@ -188,7 +236,7 @@ object HuffmanCensusReader {
     // A walk that read past the end of the scan lost the stream: the counts it
     // collected are the garbage after the desync, so report nothing instead.
     if (reader.exhausted) return null
-    return HuffmanCensus(tally, read, blocks, reader.bytesRead)
+    return HuffmanCensus(tally, blocksPerTable, read, blocks, reader.bytesRead)
   }
 
   /** Tally one decoded symbol; false when the table has no such symbol. */

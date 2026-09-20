@@ -178,6 +178,57 @@ class HuffmanCensusTest {
   }
 
   @Test
+  fun impactIsTheShareOfBlocksAnEditReaches() {
+    val counted = counted()
+    val dcLuma = counted.table(isAc = false, chroma = false)
+    val acChroma = counted.table(isAc = true, chroma = true)
+
+    assertEquals(
+      "a level table codes four blocks per MCU, in b.jpg",
+      counted.frame.mcusPerRow * counted.frame.mcuRows * 4,
+      counted.census.blocksUsing(dcLuma),
+    )
+
+    // Every block carries exactly one DC code, so the impacts of the level
+    // table's symbols must add up to the whole picture - which is also the
+    // arithmetic the screen's "how far does this reach" badge rests on.
+    val totalImpact = dcLuma.entries.sumOf { counted.census.impact(dcLuma, it.index).toDouble() }
+    assertEquals("level impacts sum to one", 1.0, totalImpact, 0.0001)
+
+    // The end-of-block code ends every block of its table, so it reaches all of
+    // them. This is the code the screen files under "rewrites the picture".
+    val eob = acChroma.entries.first { it.isEndOfBlock && it.run == 0 }
+    assertEquals("end of block reaches every chroma block", 1f, counted.census.impact(eob), 0.0001f)
+
+    // And a code the photo never emits reaches nothing.
+    val never = acChroma.entries.first { counted.census.uses(it) == 0 }
+    assertEquals("an unused code reaches nothing", 0f, counted.census.impact(never), 0f)
+  }
+
+  @Test
+  fun countedSymbolsSplitIntoReachTiers() {
+    val counted = counted()
+    val acLuma = counted.table(isAc = true, chroma = false)
+    val above = acLuma.entries.count { counted.census.impact(acLuma, it.index) >= 0.20f }
+    val inTens = acLuma.entries.count {
+      counted.census.impact(acLuma, it.index) in 0.01f..0.20f
+    }
+    val specks = acLuma.entries.count {
+      val impact = counted.census.impact(acLuma, it.index)
+      impact > 0f && impact < 0.01f
+    }
+    assertEquals("the three tiers are disjoint", 0, above + inTens + specks -
+      (above + inTens + specks))
+    assertTrue("only a few codes reach most of the picture ($above)", above in 1..20)
+    assertTrue("but the gentle end is populated ($specks)", specks > 5)
+    assertEquals(
+      "every used symbol lands in a tier",
+      counted.census.usedSymbolCount(acLuma),
+      above + inTens + specks,
+    )
+  }
+
+  @Test
   fun censusIsRefusedForAProgressiveFile() {
     val data = fixture("../a.jpg")
     val structure = JpegParser.parse(data)

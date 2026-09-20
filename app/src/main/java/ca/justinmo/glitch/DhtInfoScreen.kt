@@ -7,10 +7,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -65,6 +67,10 @@ internal fun DhtInfoScreen(
       )
     }
     InfoSection(
+      title = stringResource(R.string.dht_info_odds_title),
+      body = stringResource(R.string.dht_info_odds_body),
+    )
+    InfoSection(
       title = stringResource(R.string.dht_info_book_title),
       body = stringResource(R.string.dht_info_book_body),
     ) {
@@ -73,6 +79,19 @@ internal fun DhtInfoScreen(
       Spacer(Modifier.height(6.dp))
       Text(
         text = stringResource(R.string.dht_info_book_caption),
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+      )
+    }
+    InfoSection(
+      title = stringResource(R.string.dht_info_tiers_title),
+      body = stringResource(R.string.dht_info_tiers_body),
+    ) {
+      Spacer(Modifier.height(10.dp))
+      TierBar()
+      Spacer(Modifier.height(6.dp))
+      Text(
+        text = stringResource(R.string.dht_info_tiers_caption),
         style = MaterialTheme.typography.labelSmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
       )
@@ -283,6 +302,53 @@ private fun RunSizeDiagram(run: Int, size: Int, what: String) {
 
 /** Coefficients drawn per row of [RunSizeDiagram]; enough to show a long skip. */
 private const val RUN_SIZE_CELLS = 16
+
+/**
+ * The three tiers as one bar, split the way the screen splits them: a thin
+ * gentle end and a wide destructive one.
+ *
+ * The widths are the sample batch's numbers rather than a drawing of them - of
+ * the 840 edits that changed a picture at all, 211 were worth keeping.
+ */
+@Composable
+private fun TierBar() {
+  val touch = MaterialTheme.colorScheme.primary
+  val texture = MaterialTheme.colorScheme.tertiary
+  val rewrite = MaterialTheme.colorScheme.error
+  val track = MaterialTheme.colorScheme.surfaceContainerHighest
+  Row(
+    modifier = Modifier
+      .fillMaxWidth()
+      .height(16.dp)
+      .clip(RoundedCornerShape(8.dp)),
+  ) {
+    // 211 usable, 629 destructive, out of the 2784 edits the region offers.
+    Box(modifier = Modifier.weight(211f).fillMaxSize().background(touch))
+    Box(modifier = Modifier.weight(1848f).fillMaxSize().background(track))
+    Box(modifier = Modifier.weight(629f).fillMaxSize().background(rewrite))
+  }
+  Spacer(Modifier.height(8.dp))
+  LegendDot(color = touch, text = stringResource(R.string.dht_info_tiers_keep))
+  LegendDot(color = track, text = stringResource(R.string.dht_info_tiers_nothing))
+  LegendDot(color = rewrite, text = stringResource(R.string.dht_info_tiers_wreck))
+}
+
+/** One colour key under [TierBar]. */
+@Composable
+private fun LegendDot(color: Color, text: String) {
+  Row(
+    modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+    verticalAlignment = Alignment.CenterVertically,
+  ) {
+    Box(modifier = Modifier.size(10.dp).clip(RoundedCornerShape(3.dp)).background(color))
+    Spacer(Modifier.width(8.dp))
+    Text(
+      text = text,
+      style = MaterialTheme.typography.labelSmall,
+      color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+  }
+}
 
 /**
  * Code lengths of the JPEG standard AC luminance table, in symbol order:

@@ -53,29 +53,101 @@ class DhtGroupsTest {
   }
 
   @Test
-  fun theRealTableIsGroupedByUsageWhenThereIsACensus() {
+  fun tiersFollowTheShareOfBlocksAnEditReaches() {
+    assertEquals("nothing at all", DhtTier.TouchUp, tierOf(0f))
+    assertEquals("a speck", DhtTier.TouchUp, tierOf(0.0001f))
+    assertEquals("just under one percent", DhtTier.TouchUp, tierOf(0.0099f))
+    assertEquals("one percent", DhtTier.Texture, tierOf(TOUCH_UP_MAX_IMPACT))
+    assertEquals("a fifth", DhtTier.Texture, tierOf(TEXTURE_MAX_IMPACT))
+    assertEquals("past a fifth", DhtTier.Rewrite, tierOf(0.2001f))
+    assertEquals("the end-of-block code", DhtTier.Rewrite, tierOf(1f))
+    assertEquals("never seen", DhtTier.TouchUp, tierOf(0f))
+  }
+
+  @Test
+  fun theRealTableIsGroupedByHowFarEachEditReaches() {
     val data = fixture("../b.jpg")
     val structure = JpegParser.parse(data)
     val tables = HuffmanTables.parse(data, structure)
     val census = HuffmanCensusReader.read(data, structure, tables)!!
     val acLuma = tables.first { it.isAc && !it.isChroma }
 
-    val used = dhtGroups(acLuma, census, onlyUsed = true)
-    assertEquals("one section while the filter is on", 1, used.size)
-    val listed = used.single()
-    assertTrue("it is the used section", listed is DhtGroup.Used)
-    assertTrue("it is not the whole table", listed.entries.size < acLuma.symbolCount)
-    assertTrue("it is a meaningful slice", listed.entries.size > 10)
+    val groups = dhtGroups(acLuma, census, onlyUsed = true)
+    assertTrue("the census produces tiers", groups.all { it is DhtGroup.Tier })
 
-    // Loudest first, which is the ordering the screen promises.
-    val uses = listed.entries.map { census.uses(it) }
-    assertEquals("sorted by usage, descending", uses.sortedDescending(), uses)
+    // Gentlest first: the tier list has to open on the touch-ups, because that
+    // is the whole point of the redesign (the old screen opened on the codes
+    // that rewrite the picture).
+    val tiers = groups.map { (it as DhtGroup.Tier).tier }
+    assertEquals("tiers in order", tiers, tiers.sortedBy { it.ordinal })
+
+    val used = acLuma.entries.filter { census.uses(it) > 0 }
+    assertEquals("every used symbol is listed", used.size, groups.sumOf { it.entries.size })
+    assertEquals("nothing unused leaks in", used.size, groups.flatMap { it.entries }.distinct().size)
+
+    // Inside a tier, the code that reaches furthest comes first.
+    for (group in groups.map { it as DhtGroup.Tier }) {
+      val impacts = group.entries.map { census.impact(it) }
+      assertEquals("reach descends down a tier", impacts.sortedDescending(), impacts)
+      val expected = when (group.tier) {
+        DhtTier.TouchUp -> impacts.all { it < TOUCH_UP_MAX_IMPACT }
+        DhtTier.Texture -> impacts.all { it in TOUCH_UP_MAX_IMPACT..TEXTURE_MAX_IMPACT }
+        DhtTier.Rewrite -> impacts.all { it > TEXTURE_MAX_IMPACT }
+      }
+      assertTrue("${group.tier} holds the right reaches", expected)
+    }
 
     val all = dhtGroups(acLuma, census, onlyUsed = false)
-    assertEquals("two sections with the filter off", 2, all.size)
-    assertEquals("and every symbol is listed", acLuma.symbolCount, all.sumOf { it.entries.size })
-    assertTrue("the second section is the unused tail", all[1] is DhtGroup.Unused)
-    assertTrue("the unused tail is genuinely unused", all[1].entries.all { census.uses(it) == 0 })
+    assertEquals("one more section with the filter off", groups.size + 1, all.size)
+    assertTrue("the last one is the unused tail", all.last() is DhtGroup.Unused)
+    assertTrue("the unused tail is genuinely unused", all.last().entries.all { census.uses(it) == 0 })
+  }
+
+  @Test
+  fun theDestructiveCodesAreKeptOutOfTheOpeningSection() {
+    // The measured failure of the first version: its list opened on AC luma's
+    // first 32 symbols, the ones every block uses, which the sample batch
+    // measured as 96% destructive. Those must not be in the first section now.
+    val data = fixture("../b.jpg")
+    val structure = JpegParser.parse(data)
+    val tables = HuffmanTables.parse(data, structure)
+    val census = HuffmanCensusReader.read(data, structure, tables)!!
+    val acLuma = tables.first { it.isAc && !it.isChroma }
+
+    val opening = dhtGroups(acLuma, census, onlyUsed = true).first() as DhtGroup.Tier
+    assertEquals("the list opens on touch-ups", DhtTier.TouchUp, opening.tier)
+    assertTrue(
+      "and nothing in it reaches a hundredth of the picture",
+      opening.entries.all { census.impact(it) < TOUCH_UP_MAX_IMPACT },
+    )
+    val rewrite = dhtGroups(acLuma, census, onlyUsed = true)
+      .filterIsInstance<DhtGroup.Tier>()
+      .firstOrNull { it.tier == DhtTier.Rewrite }
+    // The end-of-block code is in every luma block, so it has to be behind the
+    // rewrite heading rather than mixed in with the harmless ones.
+    assertTrue("the every-block codes are in their own section", rewrite != null)
+    assertTrue(
+      "the end of block symbol is one of them",
+      rewrite!!.entries.any { it.isEndOfBlock && it.run == 0 },
+    )
+  }
+
+  @Test
+  fun theTierCountsAddUp() {
+    val data = fixture("../b.jpg")
+    val structure = JpegParser.parse(data)
+    val tables = HuffmanTables.parse(data, structure)
+    val census = HuffmanCensusReader.read(data, structure, tables)!!
+    val acLuma = tables.first { it.isAc && !it.isChroma }
+
+    val total = DhtTier.entries.sumOf { dhtTierCount(acLuma, census, it) }
+    assertEquals(
+      "every used symbol is in exactly one tier",
+      census.usedSymbolCount(acLuma),
+      total,
+    )
+    assertEquals("the end of block code reaches every luma block", 1f,
+      census.impact(acLuma, 3), 0.0001f)
   }
 
   @Test
