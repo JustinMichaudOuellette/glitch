@@ -23,5 +23,9 @@ local.properties
 # are JPEGs on purpose: Pillow wrote them, and the tests check that this app's own
 # codec reproduces those bytes, so they have to be in the repository.
 !app/src/androidTest/assets/parity/*.jpg
-# The screenshot the README shows is the one PNG in the repository's own root.
+# The two pictures the README shows - the screenshot and the download badge - are
+# the only PNGs that belong in the repository; everything else matching above is
+# glitch output or a sweep.
 !/screenshot.png
+!assets/images/*.png
+app/release/*
