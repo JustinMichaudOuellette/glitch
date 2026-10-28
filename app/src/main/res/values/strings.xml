@@ -84,7 +84,9 @@
     <string name="resize_preset_label">%1$d px</string>
     <string name="resize_progress">Resizing…</string>
     <string name="resize_skip">Skip</string>
-    <string name="resize_crop_option">Crop to 9:16 (for stories)</string>
+    <string name="resize_crop_none">No crop</string>
+    <string name="resize_crop_square">1:1</string>
+    <string name="resize_crop_stories">9:16</string>
     <string name="resize_error">Resize failed: %1$s</string>
 
     <!-- Screen 3: quantization tables (DQT) -->
@@ -167,7 +169,7 @@
     <string name="resize_info_speed_default">1736 x 2312 px ↦ 62 713 squares</string>
     <string name="resize_info_speed_small">1080 x 1920 px ↦ 32 400 squares</string>
     <string name="resize_info_controls_title">What the controls do</string>
-    <string name="resize_info_controls_body">The slider picks the width of the resized photo you will be working with. Crop to 9:16 is available for portrait photos and is recommended for sharing to your stories.</string>
+    <string name="resize_info_controls_body">The slider picks the width of the resized photo you will be working with. The crop buttons pick the frame it is exported in: No crop keeps the whole picture, 1:1 trims it to a square, and 9:16 is the frame stories take.</string>
 
     <!-- Screen 4: glitch editor -->
     <string name="edit_undo">Undo</string>

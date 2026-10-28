@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -17,6 +18,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.systemGestureExclusion
 import androidx.compose.material3.Button
@@ -27,8 +29,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -48,12 +48,13 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import ca.justinmo.glitch.R
 import ca.justinmo.glitch.RESIZE_MAX_DIM
-import ca.justinmo.glitch.STORIES_ASPECT
 import ca.justinmo.glitch.PreviewImage
 import ca.justinmo.glitch.ZoomState
 import ca.justinmo.glitch.decodeSampled
@@ -119,43 +120,49 @@ private fun allowedResizeSizes(min: Int, max: Int, anchor: Int, step: Int): List
   return sizes.toList()
 }
 
-/** True when [width] x [height] is already a 9:16 frame (within tolerance). */
-private fun isStoriesAspect(width: Int, height: Int): Boolean =
-  abs(width.toDouble() / height - STORIES_ASPECT.toDouble()) <= 0.01
+/** True when [width] x [height] is already [aspect] (within tolerance). */
+private fun isAspect(width: Int, height: Int, aspect: Float): Boolean =
+  abs(width.toDouble() / height - aspect.toDouble()) <= 0.01
 
 /**
  * True when the chosen size and crop leave the file exactly as it is: the full
- * width, and no crop left to apply. The button then reads "Keep <w> x <h>" and
+ * width, and no trim left to apply. The button then reads "Keep <w> x <h>" and
  * the original bytes are handed on instead of being re-encoded at the same size.
  */
 private fun keepsSource(
   resolution: Pair<Int, Int>?,
   targetSize: Int,
-  cropForStories: Boolean,
+  crop: CropMode,
 ): Boolean {
   val (width, height) = resolution ?: return false
   if (targetSize < width) return false
-  return !cropForStories || isStoriesAspect(width, height)
+  val aspect = crop.aspect ?: return true
+  return isAspect(width, height, aspect)
 }
 
 /**
- * Whether the 9:16 crop should start on for a picture of this size.
+ * Which crop the screen starts the user off with, for a picture of this size.
  *
- * On for anything that is not wider than it is tall, off for a landscape picture, and the
- * difference is not a matter of taste: a crop to 9:16 takes a *trim* off a portrait frame -
- * the sides of a 3:4 photo, the top and bottom of one already taller than 9:16 - while on a
- * landscape photo it keeps a vertical slice and throws the rest away, less than half of a
- * 4:3 picture. A default that removes most of the photograph the moment it is opened is not
- * a default, so a landscape picture arrives whole and the switch is how the crop is asked
- * for.
+ * The answer follows what the trim would cost, because the crop is offered before it is
+ * understood and a default that removes most of the photograph the moment it is opened is
+ * not a default. On a landscape picture a 9:16 crop keeps a vertical slice and throws away
+ * more than half of a 4:3 frame, so a landscape picture arrives whole and No crop is
+ * selected. On a portrait picture 9:16 is a trim - the sides of a 3:4 photo, the top and
+ * bottom of one already taller than 9:16 - and it is the frame stories take, so that is
+ * the default there. A square picture starts on 1:1 for the same reason: it is the frame
+ * that keeps it whole, where 9:16 would cut the sides off a picture that is already square.
  *
- * Nothing here is a decision: the switch writes the user's own answer into the holder, and
+ * Nothing here is a decision: the buttons write the user's own answer into the holder, and
  * this only stands in for it until they make one - which is also why it can be worked out
  * again for the next photo.
  */
-private fun defaultCropFor(resolution: Pair<Int, Int>?): Boolean {
-  val (width, height) = resolution ?: return true
-  return width <= height
+private fun defaultCropFor(resolution: Pair<Int, Int>?): CropMode {
+  val (width, height) = resolution ?: return CropMode.None
+  return when {
+    width > height -> CropMode.None
+    width < height -> CropMode.Stories
+    else -> CropMode.Square
+  }
 }
 
 /**
@@ -192,11 +199,11 @@ internal fun ResizeScreen(
   // arriving here again has to meet the size and the crop you left rather than a
   // step reset to its defaults. Only a *choice* is remembered out there, though -
   // [ResizeState.targetSize] stays null until the seek bar is touched and
-  // [ResizeState.cropForStories] until the switch is - so the defaults they stand in
-  // for belong here, where the sizes being chosen between are and where the photo's
+  // [ResizeState.crop] until one of the crop buttons is - so the defaults they stand
+  // in for belong here, where the sizes being chosen between are and where the photo's
   // own shape is known.
   val targetSize = state.targetSize ?: DEFAULT_RESIZE_PX
-  val cropForStories = state.cropForStories ?: defaultCropFor(resolution)
+  val crop = state.crop ?: defaultCropFor(resolution)
 
   // Pinch-to-zoom. The gesture itself is recognised by the content (it owns the
   // modifier that needs the layout), so this is only the zoom/pan it reports back -
@@ -223,9 +230,9 @@ internal fun ResizeScreen(
     }
   }
 
-  val displayedPreview = remember(preview, targetSize, cropForStories) {
+  val displayedPreview = remember(preview, targetSize, crop) {
     preview?.let { raw ->
-      previewAtTarget(raw, targetSize, if (cropForStories) STORIES_ASPECT else null)
+      previewAtTarget(raw, targetSize, crop.aspect)
     }
   }
 
@@ -272,10 +279,10 @@ internal fun ResizeScreen(
       // not the file that came in. The crop is a different shape, and the sliders and buttons
       // are placed off the frame, so laying the screen out for the photo that came in would
       // put them under a picture that is not the one on screen.
-      expectedSize = calculateResultingDim(resolution, targetSize, cropForStories),
+      expectedSize = calculateResultingDim(resolution, targetSize, crop),
       resolution = currentResolution,
       targetSize = targetSize,
-      cropForStories = cropForStories,
+      crop = crop,
       working = working,
       zoomScale = zoom.scale,
       zoomOffset = zoom.offset,
@@ -284,17 +291,17 @@ internal fun ResizeScreen(
         zoom.offset += panChange
       },
       onTargetSizeChange = { state.targetSize = it },
-      onCropChange = { state.cropForStories = it },
+      onCropChange = { state.crop = it },
       onBack = onBack,
       onInfo = { state.showInfo = true },
       onSkip = { onContinue(bytes, zoom.scale, zoom.offset) },
       onResize = {
-        if (keepsSource(resolution, targetSize, cropForStories)) {
+        if (keepsSource(resolution, targetSize, crop)) {
           // The button promised to keep the file: pass the original bytes on
           // rather than re-encoding an identical frame.
           onContinue(bytes, zoom.scale, zoom.offset)
         } else {
-          resize(targetSize, if (cropForStories) STORIES_ASPECT else null)
+          resize(targetSize, crop.aspect)
         }
       },
     )
@@ -327,13 +334,13 @@ internal fun ResizeScreenContent(
   expectedSize: Pair<Int, Int>? = null,
   resolution: Pair<Int, Int>?,
   targetSize: Int,
-  cropForStories: Boolean,
+  crop: CropMode,
   working: Boolean,
   zoomScale: Float,
   zoomOffset: Offset,
   onTransform: (zoomChange: Float, panChange: Offset) -> Unit,
   onTargetSizeChange: (Int) -> Unit,
-  onCropChange: (Boolean) -> Unit,
+  onCropChange: (CropMode) -> Unit,
   onBack: () -> Unit,
   onInfo: () -> Unit,
   onSkip: () -> Unit,
@@ -395,9 +402,9 @@ internal fun ResizeScreenContent(
 
         // A photo that leaves the bottom of the screen room for them gets the controls
         // there: the picture is centred in what is left above that room (the frame moved it
-        // down to [PreviewFrame.top]) and the slider, the crop switch and the two buttons
-        // are stacked in the bottom portion. This is the arrangement a landscape photo
-        // lands in, and the one it needed: before it, the panel rode the picture's own
+        // down to [PreviewFrame.top]) and the slider, the crop buttons and the two action
+        // buttons are stacked in the bottom portion. This is the arrangement a landscape
+        // photo lands in, and the one it needed: before it, the panel rode the picture's own
         // bottom edge - which on a landscape photo is halfway up the screen - so the
         // controls were drawn across the middle of the picture with an empty band under it.
         if (frame.stacksControls) {
@@ -411,7 +418,7 @@ internal fun ResizeScreenContent(
             ResizeOverlayContent(
               resolution = resolution,
               targetSize = targetSize,
-              cropForStories = cropForStories,
+              crop = crop,
               onTargetSizeChange = onTargetSizeChange,
               onCropChange = onCropChange,
               modifier = Modifier.padding(horizontal = 24.dp)
@@ -420,8 +427,8 @@ internal fun ResizeScreenContent(
               working = working,
               onSkip = onSkip,
               onResize = onResize,
-              resultingDim = calculateResultingDim(resolution, targetSize, cropForStories),
-              keeping = keepsSource(resolution, targetSize, cropForStories),
+              resultingDim = calculateResultingDim(resolution, targetSize, crop),
+              keeping = keepsSource(resolution, targetSize, crop),
               modifier = Modifier.padding(horizontal = 24.dp)
             )
           }
@@ -440,14 +447,14 @@ internal fun ResizeScreenContent(
              ResizeOverlayContent(
                resolution = resolution,
                targetSize = targetSize,
-               cropForStories = cropForStories,
+               crop = crop,
                onTargetSizeChange = onTargetSizeChange,
                onCropChange = onCropChange,
                modifier = Modifier.padding(horizontal = 24.dp).padding(bottom = 12.dp)
              )
           }
 
-          val resultingDim = calculateResultingDim(resolution, targetSize, cropForStories)
+          val resultingDim = calculateResultingDim(resolution, targetSize, crop)
           Box(
             modifier = Modifier
               .fillMaxWidth()
@@ -460,7 +467,7 @@ internal fun ResizeScreenContent(
               onSkip = onSkip,
               onResize = onResize,
               resultingDim = resultingDim,
-              keeping = keepsSource(resolution, targetSize, cropForStories),
+              keeping = keepsSource(resolution, targetSize, crop),
               modifier = Modifier.padding(horizontal = 24.dp)
             )
           }
@@ -478,7 +485,7 @@ internal fun ResizeScreenContent(
           ResizeOverlayContent(
             resolution = resolution,
             targetSize = targetSize,
-            cropForStories = cropForStories,
+            crop = crop,
             onTargetSizeChange = onTargetSizeChange,
             onCropChange = onCropChange,
             modifier = Modifier
@@ -494,13 +501,13 @@ internal fun ResizeScreenContent(
 
         // Short window, or a photo that fills the pane: keep the buttons in their own row.
         if (!pane.hasRoomBelow) {
-          val resultingDim = calculateResultingDim(resolution, targetSize, cropForStories)
+          val resultingDim = calculateResultingDim(resolution, targetSize, crop)
           ResizeControls(
             working = working,
             onSkip = onSkip,
             onResize = onResize,
             resultingDim = resultingDim,
-            keeping = keepsSource(resolution, targetSize, cropForStories),
+            keeping = keepsSource(resolution, targetSize, crop),
             modifier = Modifier
               .navigationBarsPadding()
               .padding(horizontal = 24.dp)
@@ -517,9 +524,9 @@ internal fun ResizeScreenContent(
 private fun ResizeOverlayContent(
   resolution: Pair<Int, Int>?,
   targetSize: Int,
-  cropForStories: Boolean,
+  crop: CropMode,
   onTargetSizeChange: (Int) -> Unit,
-  onCropChange: (Boolean) -> Unit,
+  onCropChange: (CropMode) -> Unit,
   modifier: Modifier = Modifier,
 ) {
   Column(modifier = modifier.fillMaxWidth()) {
@@ -597,30 +604,80 @@ private fun ResizeOverlayContent(
       }
     )
 
-    if (res != null && !isStoriesAspect(res.first, res.second)) {
+    // Always offered, because there is always a frame to decide between: even a picture
+    // that is already 9:16 can still be squared off. The row it replaces hid itself on a
+    // 9:16 photo, back when the only states were "crop" and "no crop" and one of them did
+    // nothing there.
+    if (res != null) {
       Spacer(Modifier.height(16.dp))
-      Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
+      CropModeRow(current = crop, onCropChange = onCropChange)
+    }
+  }
+}
+
+/**
+ * The three frames a picture can be cropped to, as one row of buttons.
+ *
+ * No crop keeps the photo's own shape, 1:1 trims it to a centred square and 9:16 to the
+ * frame stories take. The frame in effect is filled with the primary colour and reported
+ * as selected to a screen reader, so which frame the Resize button is about to export can
+ * be read without pressing anything.
+ *
+ * A row rather than the switch it replaced: a switch has two positions, and there are
+ * three answers now.
+ */
+@Composable
+private fun CropModeRow(
+  current: CropMode,
+  onCropChange: (CropMode) -> Unit,
+  modifier: Modifier = Modifier,
+) {
+  Row(
+    modifier = modifier.fillMaxWidth().selectableGroup(),
+    horizontalArrangement = Arrangement.spacedBy(8.dp),
+  ) {
+    CropMode.entries.forEach { mode ->
+      val chosen = mode == current
+      Button(
+        onClick = { onCropChange(mode) },
+        modifier = Modifier
+          .weight(1f)
+          .height(44.dp)
+          .semantics { selected = chosen },
+        colors = ButtonDefaults.buttonColors(
+          containerColor = if (chosen) {
+            MaterialTheme.colorScheme.primary
+          } else {
+            MaterialTheme.colorScheme.surfaceContainerHigh
+          },
+          contentColor = if (chosen) {
+            MaterialTheme.colorScheme.onPrimary
+          } else {
+            MaterialTheme.colorScheme.onSurface
+          },
+        ),
+        elevation = ButtonDefaults.buttonElevation(
+          defaultElevation = if (chosen) 4.dp else 2.dp,
+        ),
+        contentPadding = PaddingValues(horizontal = 8.dp),
       ) {
-        Column(modifier = Modifier.weight(1f)) {
-          Text(
-            text = stringResource(R.string.resize_crop_option),
-            style = MaterialTheme.typography.bodyLarge.copy(shadow = createShadow()),
-          )
-        }
-        Switch(
-          checked = cropForStories,
-          onCheckedChange = onCropChange,
-          colors = SwitchDefaults.colors(
-            checkedThumbColor = MaterialTheme.colorScheme.primary,
-            checkedTrackColor = MaterialTheme.colorScheme.primaryContainer,
-          )
+        Text(
+          text = stringResource(mode.labelRes),
+          style = MaterialTheme.typography.labelLarge,
+          maxLines = 1,
         )
       }
     }
   }
 }
+
+/** The label on each crop button. */
+private val CropMode.labelRes: Int
+  get() = when (this) {
+    CropMode.None -> R.string.resize_crop_none
+    CropMode.Square -> R.string.resize_crop_square
+    CropMode.Stories -> R.string.resize_crop_stories
+  }
 
 @Composable
 private fun ResizeControls(
@@ -674,15 +731,15 @@ private fun ResizeControls(
 private fun calculateResultingDim(
   res: Pair<Int, Int>?,
   targetSize: Int,
-  cropForStories: Boolean
+  crop: CropMode,
 ): Pair<Int, Int>? {
   if (res == null) return null
   val (w, h) = res
-  val aspect = if (cropForStories) STORIES_ASPECT else w.toFloat() / h.toFloat()
-  val croppedW = if (cropForStories) {
-    val current = w.toFloat() / h
-    if (current > aspect) (h * aspect).roundToInt() else w
-  } else w
+  val sourceAspect = w.toFloat() / h.toFloat()
+  val aspect = crop.aspect ?: sourceAspect
+  // Too wide for the chosen frame: the sides go. Otherwise the frame is cut from the
+  // top and bottom, so the width the export starts from is the full width.
+  val croppedW = if (sourceAspect > aspect) (h * aspect).roundToInt() else w
   val finalW = min(croppedW, targetSize)
   val finalH = (finalW / aspect).roundToInt()
   return finalW to finalH
@@ -694,7 +751,7 @@ private fun calculateResultingDim(
 private fun ResizeScreenPreviewShell(
   working: Boolean = false,
   targetSize: Int = 1080,
-  cropForStories: Boolean = true,
+  crop: CropMode = CropMode.Stories,
 ) {
   GlitchTheme {
     Surface(modifier = Modifier.fillMaxSize()) {
@@ -702,7 +759,7 @@ private fun ResizeScreenPreviewShell(
         preview = previewImageBitmap(),
         resolution = 4032 to 3024,
         targetSize = targetSize,
-        cropForStories = cropForStories,
+        crop = crop,
         working = working,
         zoomScale = 1f,
         zoomOffset = Offset.Zero,
@@ -736,12 +793,19 @@ private fun ResizeScreenSmallScreenPreview() {
   ResizeScreenPreviewShell(working = false)
 }
 
+/** The square crop on a landscape photo: a centred 1:1 export. */
+@Preview(name = "Resize · 1:1", device = "spec:width=411dp,height=891dp", showBackground = true)
+@Composable
+private fun ResizeScreenSquarePreview() {
+  ResizeScreenPreviewShell(crop = CropMode.Square)
+}
+
 /**
- * Top of the seek bar with the crop off: nothing would change, so the button
+ * Top of the seek bar with No crop selected: nothing would change, so the button
  * reads "Keep 4032 × 3024" and hands the original bytes on.
  */
 @Preview(name = "Resize · keep original", device = "spec:width=411dp,height=891dp", showBackground = true)
 @Composable
 private fun ResizeScreenKeepPreview() {
-  ResizeScreenPreviewShell(targetSize = 4032, cropForStories = false)
+  ResizeScreenPreviewShell(targetSize = 4032, crop = CropMode.None)
 }

@@ -53,7 +53,7 @@ edits, which most pictures do not need.
 | screen | what it does |
 |---|---|
 | **Source** | camera, gallery, or an image shared into the app from another app |
-| **Resize** | scale to a target width, with an optional Stories crop; previews through the same resampler the export uses |
+| **Resize** | scale to a target width and choose the crop (No crop, 1:1 or 9:16); previews through the same resampler the export uses |
 | **Quantization table** | pick one of eight pattern families (brightness, saturation, vertical, horizontal, checkered - each in luma and color) and retune the quantizers that draw it |
 | **Scan** | flip bits in the scan data, aimed at a row band, with restart markers to bound how far one bad bit travels. Its title carries a triangle that opens the Huffman table |
 | **Huffman table** | reached from that triangle, and its next button goes on to the Preview. Edit what each code means. Each code carries a strip of eight cells colored by what the sample sweep measured for that bit - grey changed nothing, green was one the sweep kept, red was filed as a wreck. Tapping a cell flips that bit, red or not: the strip labels, it never blocks |
