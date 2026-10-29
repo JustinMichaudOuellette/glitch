@@ -115,8 +115,19 @@ internal fun imageResolution(bytes: ByteArray): Pair<Int, Int>? = runCatching {
   if (swapAxes) bounds.outHeight to bounds.outWidth else bounds.outWidth to bounds.outHeight
 }.getOrNull()
 
-/** Decode, apply EXIF orientation, optionally crop, scale to at most [targetWidth] px wide. */
-internal fun resizeJpeg(bytes: ByteArray, targetWidth: Int, cropAspect: Float? = null): ByteArray {
+/**
+ * Decode, apply EXIF orientation, optionally crop, scale to at most [targetWidth] px wide.
+ *
+ * The crop is either a centred window of [cropAspect] - the older callers, and the shape
+ * the parity tests were written against - or an exact [crop] rectangle given as
+ * proportions of the upright picture, which is what the resize screen's editor produces.
+ */
+internal fun resizeJpeg(
+  bytes: ByteArray,
+  targetWidth: Int,
+  cropAspect: Float? = null,
+  crop: NormalizedCrop? = null,
+): ByteArray {
   // The reference pipeline in one call: decode, crop, Lanczos, re-encode at q92
   // with 4:2:0 - the settings the b_x4 sweep's files carry, so a resized photo
   // here is the same pixels the sweep measured.
@@ -128,13 +139,17 @@ internal fun resizeJpeg(bytes: ByteArray, targetWidth: Int, cropAspect: Float? =
   // left in the file to say it should be turned, so the sideways copy is what
   // every later step decoded. That was the rotation that appeared the moment a
   // quantization-table bit was flipped: the flip is just the first re-decode.
-  JpegNative.resizeReference(bytes, targetWidth, cropAspect, exifOrientation(bytes))
+  JpegNative.resizeReference(bytes, targetWidth, cropAspect, crop, exifOrientation(bytes))
     ?.let { return it }
 
   val raw = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
     ?: error("image could not be decoded")
   val oriented = applyExifOrientation(raw, bytes)
-  val cropped = if (cropAspect != null) centeredCropBitmap(oriented, cropAspect) else null
+  val cropped = when {
+    crop != null -> cropBitmapRect(oriented, crop)
+    cropAspect != null -> centeredCropBitmap(oriented, cropAspect)
+    else -> null
+  }
   val src = cropped ?: oriented
   if (cropped != null && cropped !== oriented) oriented.recycle() // intermediate
   val w = src.width
@@ -150,6 +165,22 @@ internal fun resizeJpeg(bytes: ByteArray, targetWidth: Int, cropAspect: Float? =
   if (scaled !== src) scaled.recycle()
   src.recycle()
   return out.toByteArray()
+}
+
+/**
+ * Crop the rectangle [crop] out of [bmp], in proportions of its width and height.
+ * Does NOT recycle [bmp]: returns [bmp] itself when the rectangle is the whole picture,
+ * otherwise a new bitmap whose lifetime is independent of the input.
+ */
+internal fun cropBitmapRect(bmp: Bitmap, crop: NormalizedCrop): Bitmap {
+  val width = bmp.width
+  val height = bmp.height
+  val left = (crop.left * width).roundToInt().coerceIn(0, width - 1)
+  val top = (crop.top * height).roundToInt().coerceIn(0, height - 1)
+  val right = (crop.right * width).roundToInt().coerceIn(left + 1, width)
+  val bottom = (crop.bottom * height).roundToInt().coerceIn(top + 1, height)
+  if (left == 0 && top == 0 && right == width && bottom == height) return bmp
+  return Bitmap.createBitmap(bmp, left, top, right - left, bottom - top)
 }
 
 /**
@@ -180,8 +211,8 @@ internal fun centeredCropBitmap(bmp: Bitmap, targetAspect: Float): Bitmap {
 }
 
 /**
- * Cheap live preview of the export output: optionally center-crop [src] to
- * [cropAspect], then scale so the width is at most [targetWidthPx].
+ * Cheap live preview of an export: optionally crop [src] to [cropAspect] or to the
+ * exact [crop] rectangle, then scale so the width is at most [targetWidthPx].
  * Operates on the already-decoded sample (never re-decodes the file), never
  * upscales, and never recycles [src]. Returns a new bitmap (or [src] itself
  * when no crop and no downscale is needed).
@@ -189,11 +220,19 @@ internal fun centeredCropBitmap(bmp: Bitmap, targetAspect: Float): Bitmap {
 internal fun previewAtTarget(
   src: Bitmap,
   targetWidthPx: Int,
-  cropAspect: Float?,
+  cropAspect: Float? = null,
+  crop: NormalizedCrop? = null,
 ): Bitmap {
+  val cropped = when {
+    crop != null -> cropBitmapRect(src, crop)
+    cropAspect != null -> centeredCropBitmap(src, cropAspect)
+    else -> src
+  }
   // The resampler the export will use, so the preview is the file.
-  JpegNative.scaleBitmap(src, targetWidthPx, cropAspect)?.let { return it }
-  val cropped = if (cropAspect != null) centeredCropBitmap(src, cropAspect) else src
+  JpegNative.scaleBitmap(cropped, targetWidthPx, null)?.let { scaled ->
+    if (cropped !== src) cropped.recycle() // intermediate crop is disposable
+    return scaled
+  }
   val w = cropped.width
   val h = cropped.height
   if (w <= targetWidthPx) return cropped // already fits - nothing to scale

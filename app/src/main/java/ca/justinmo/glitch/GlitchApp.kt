@@ -154,11 +154,13 @@ internal fun GlitchApp(state: GlitchViewModel, sharedImageUri: Uri? = null) {
             ResizeScreen(
               bytes = state.sourceBytes!!,
               resolution = state.sourceResolution!!,
-              zoom = state.zoom,
               previewImage = state.previewImage,
               state = state.resize,
               onBack = { backToSource() },
               onContinue = { resized, _, _ ->
+                // The file and its frame changed under the pinch, so the framing does not
+                // carry: the step after this one meets its picture fitted.
+                state.resetZoom()
                 state.advance(GlitchViewModel.Step.Resize, resized)
                 state.step = GlitchViewModel.Step.Dqt
               },

@@ -266,8 +266,11 @@ internal class GlitchViewModel : ViewModel() {
     dqt.clear()
     dht.clear()
     scan.clear()
-    zoom.scale = 1f
-    zoom.offset = Offset.Zero
+    resetZoom()
+    // The crop is a decision about the picture that is going: its frame, its window and
+    // the default they stand in for all depend on the photo. The export width stays,
+    // because that is how this user works rather than what this file is.
+    resize.resetCropForNewPicture()
     // Another photo's picture is not this one's, and there is no reason to hold the megabytes
     // while the user is still in the picker.
     previewImage.clear()
@@ -277,6 +280,19 @@ internal class GlitchViewModel : ViewModel() {
     // Whatever was saved was the *last* picture, so the preview has to ask again before its
     // restart button throws this one away.
     preview.clearSaved()
+  }
+
+  /**
+   * Start the picture fitted again.
+   *
+   * The pinch is the framing of the file on screen, so a step that changes the file - or
+   * hands on a crop, which changes its frame - has to leave the zoom where a new picture
+   * wants it. Otherwise the next step meets a cropped file still blown up to wherever the
+   * last one was being examined.
+   */
+  fun resetZoom() {
+    zoom.scale = 1f
+    zoom.offset = Offset.Zero
   }
 }
 

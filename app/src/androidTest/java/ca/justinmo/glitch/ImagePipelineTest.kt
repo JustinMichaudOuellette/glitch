@@ -11,6 +11,7 @@ import ca.justinmo.glitch.dqt.QuantTables
 import ca.justinmo.glitch.jpeg.JpegNative
 import ca.justinmo.glitch.jpeg.JpegParser
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -253,6 +254,31 @@ class ImagePipelineTest {
       shown.recycle()
     }
     source.recycle()
+  }
+
+  @Test
+  fun theExactCropRectangleKeepsThePartItNames() {
+    // The crop editor hands the pipeline a rectangle rather than an aspect, because the
+    // user can drag the window across the picture. The fixture is 192x144 and a
+    // photograph, so its two halves cannot encode the same unless the rectangle was
+    // ignored - which is exactly the failure a centre-crop would produce.
+    val jpeg = asset("source.jpg")
+
+    val left = resizeJpeg(jpeg, 96, crop = NormalizedCrop(0f, 0f, 0.5f, 1f))
+    val right = resizeJpeg(jpeg, 96, crop = NormalizedCrop(0.5f, 0f, 0.5f, 1f))
+    assertFalse("the two halves are different pictures", left.contentEquals(right))
+
+    val size = IntArray(2)
+    assertNotNull("the left half decodes", JpegNative.decodeArgb(left, 0, size))
+    assertEquals("half the source width", 96, size[0])
+    assertEquals("the full height", 144, size[1])
+
+    // A horizontal strip instead: the top half of 192x144 is 192x72, and a 96 px
+    // target keeps the proportions.
+    val top = resizeJpeg(jpeg, 96, crop = NormalizedCrop(0f, 0f, 1f, 0.5f))
+    assertNotNull("the top half decodes", JpegNative.decodeArgb(top, 0, size))
+    assertEquals("target width", 96, size[0])
+    assertEquals("72 scaled by 96/192", 36, size[1])
   }
 
   @Test

@@ -3,8 +3,6 @@ package ca.justinmo.glitch.resize
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.rememberTransformableState
-import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -43,7 +41,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
@@ -53,20 +50,21 @@ import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import ca.justinmo.glitch.NormalizedCrop
+import ca.justinmo.glitch.PreviewImage
 import ca.justinmo.glitch.R
 import ca.justinmo.glitch.RESIZE_MAX_DIM
-import ca.justinmo.glitch.PreviewImage
-import ca.justinmo.glitch.ZoomState
+import ca.justinmo.glitch.clampedCropPan
+import ca.justinmo.glitch.cropPixelSize
+import ca.justinmo.glitch.cropWindow
 import ca.justinmo.glitch.decodeSampled
 import ca.justinmo.glitch.previewAtTarget
 import ca.justinmo.glitch.resizeJpeg
-import ca.justinmo.glitch.ui.MediaPreview
 import ca.justinmo.glitch.ui.PreviewUtil.previewImageBitmap
 import ca.justinmo.glitch.ui.PreviewWithControls
 import ca.justinmo.glitch.ui.STACKED_CONTROLS_HEIGHT
 import ca.justinmo.glitch.ui.TitleBar
 import ca.justinmo.glitch.ui.createShadow
-import ca.justinmo.glitch.ui.previewFrame
 import ca.justinmo.glitch.ui.theme.GlitchTheme
 import kotlin.math.abs
 import kotlin.math.max
@@ -120,24 +118,30 @@ private fun allowedResizeSizes(min: Int, max: Int, anchor: Int, step: Int): List
   return sizes.toList()
 }
 
-/** True when [width] x [height] is already [aspect] (within tolerance). */
-private fun isAspect(width: Int, height: Int, aspect: Float): Boolean =
-  abs(width.toDouble() / height - aspect.toDouble()) <= 0.01
+/** The frame the chosen crop has: the mode's own, or the picture's for No crop. */
+private fun cropAspectFor(crop: CropMode, resolution: Pair<Int, Int>?): Float {
+  crop.aspect?.let { return it }
+  val (width, height) = resolution ?: return 1f
+  if (width <= 0 || height <= 0) return 1f
+  return width.toFloat() / height.toFloat()
+}
 
 /**
- * True when the chosen size and crop leave the file exactly as it is: the full
- * width, and no trim left to apply. The button then reads "Keep <w> x <h>" and
+ * True when the chosen size and crop leave the file exactly as it is: the full width, and
+ * a window that still holds the whole picture. The button then reads "Keep <w> x <h>" and
  * the original bytes are handed on instead of being re-encoded at the same size.
+ *
+ * The window is what decides it, not the mode: No crop that has been pinched in is a crop
+ * like any other, and a 9:16 window on a picture that is already 9:16 is not one at all.
  */
 private fun keepsSource(
   resolution: Pair<Int, Int>?,
   targetSize: Int,
-  crop: CropMode,
+  crop: NormalizedCrop,
 ): Boolean {
-  val (width, height) = resolution ?: return false
+  val (width, _) = resolution ?: return false
   if (targetSize < width) return false
-  val aspect = crop.aspect ?: return true
-  return isAspect(width, height, aspect)
+  return crop.isWholePicture
 }
 
 /**
@@ -166,7 +170,7 @@ private fun defaultCropFor(resolution: Pair<Int, Int>?): CropMode {
 }
 
 /**
- * Screen 2: shrink the JPEG first (faster glitching) or keep it untouched.
+ * Screen 2: crop the JPEG and shrink it (faster glitching), or keep it untouched.
  */
 @Composable
 internal fun ResizeScreen(
@@ -174,11 +178,11 @@ internal fun ResizeScreen(
   resolution: Pair<Int, Int>,
   onBack: () -> Unit,
   onContinue: (bytes: ByteArray, scale: Float, offset: Offset) -> Unit,
-  // Both defaulted so the screen still stands on its own - the previews below
-  // render it, and a caller that has no flow behind it gets a screen that works
-  // for as long as it is composed, which is what `remember` gave it before.
-  zoom: ZoomState = remember { ZoomState() },
   /**
+   * Defaulted so the screen still stands on its own - the previews below render it, and a
+   * caller with no flow behind it gets a screen that works for as long as it is composed,
+   * which is what `remember` gave it before.
+   *
    * The flow's shared decoded preview. This screen decodes a *master* of the file rather than
    * the file at the size it draws it, so being handed the last step's decode is what keeps a
    * step back into this screen from going blank while that master is made again.
@@ -198,18 +202,16 @@ internal fun ResizeScreen(
   // about the size: the screen that came before it was left for that reason, and
   // arriving here again has to meet the size and the crop you left rather than a
   // step reset to its defaults. Only a *choice* is remembered out there, though -
-  // [ResizeState.targetSize] stays null until the seek bar is touched and
-  // [ResizeState.crop] until one of the crop buttons is - so the defaults they stand
-  // in for belong here, where the sizes being chosen between are and where the photo's
-  // own shape is known.
+  // [ResizeState.targetSize] stays null until the seek bar is touched,
+  // [ResizeState.crop] until one of the crop buttons is, and the window in
+  // [ResizeState.cropZoom] / [ResizeState.cropPan] likewise - so the defaults they
+  // stand in for belong here, where the sizes being chosen between are and where the
+  // photo's own shape is known.
   val targetSize = state.targetSize ?: DEFAULT_RESIZE_PX
   val crop = state.crop ?: defaultCropFor(resolution)
-
-  // Pinch-to-zoom. The gesture itself is recognised by the content (it owns the
-  // modifier that needs the layout), so this is only the zoom/pan it reports back -
-  // and the zoom is [zoom] rather than a local, because it is deliberately
-  // continuous: the framing left here is the framing the table steps are reached
-  // at, and the framing this step is found in when it is walked back to.
+  val cropAspect = cropAspectFor(crop, resolution)
+  val sourceAspect = resolution.first.toFloat() / resolution.second.toFloat()
+  val cropRect = cropWindow(sourceAspect, cropAspect, state.cropZoom, state.cropPan)
 
   LaunchedEffect(bytes) {
     // One cached sample large enough for the largest selectable target (the
@@ -230,43 +232,38 @@ internal fun ResizeScreen(
     }
   }
 
-  val displayedPreview = remember(preview, targetSize, crop) {
-    preview?.let { raw ->
-      previewAtTarget(raw, targetSize, crop.aspect)
-    }
-  }
-
-  fun resize(maxDim: Int, cropAspect: Float?) {
+  fun resize(maxDim: Int, window: NormalizedCrop) {
     if (working) return
     working = true
     error = null
     scope.launch {
       val result = runCatching {
-        withContext(Dispatchers.Default) { resizeJpeg(bytes, maxDim, cropAspect) }
+        withContext(Dispatchers.Default) { resizeJpeg(bytes, maxDim, crop = window) }
       }
+      val resized = result.getOrNull()
+      if (resized == null) {
+        working = false
+        error = context.getString(R.string.resize_error, result.exceptionOrNull()?.message)
+        return@launch
+      }
+      // The next step's first frame: the same window the export kept, cut out of the
+      // master and scaled by the resampler the export uses. What this screen shows is the
+      // whole photograph with the frame drawn over it, which is the wrong shape to hand
+      // on; this is the export previewed rather than the editor's view of the source.
+      // A preview that cannot be made is not an export failure - the next step decodes.
+      val exportPreview = runCatching {
+        withContext(Dispatchers.Default) {
+          preview?.let { previewAtTarget(it, maxDim, crop = window) }
+        }
+      }.getOrNull()
+      // The cap it is filed under is its own long edge, which is what the cap means: this
+      // frame carries that much detail, so a step wanting less needs no decode of its own.
+      exportPreview?.let { previewImage.put(resized, maxOf(it.width, it.height), it) }
       working = false
-      result.onSuccess { resized ->
-        // The picture this screen has been showing *is* the file being handed on: the resample
-        // it was derived with is the one the export uses. So it goes into the shared preview
-        // under the new bytes, and the next step draws it on its first frame.
-        //
-        // Without this, what the next step found was the *master* decode of the file that came
-        // in - which is a different shape from the file going out whenever there is a crop, and
-        // a frame of the wrong shape is one the next step must not draw, so it drew nothing
-        // until its own decode landed. That is the one transition that still went blank, and it
-        // is the commonest one there is: crop on, press resize, land on the tables.
-        //
-        // The cap it is filed under is its own long edge, which is what the cap means: this
-        // frame carries that much detail, so a step wanting less needs no decode of its own.
-        displayedPreview?.let { previewImage.put(resized, maxOf(it.width, it.height), it) }
-        onContinue(resized, zoom.scale, zoom.offset)
-      }.onFailure { error = context.getString(R.string.resize_error, it.message) }
+      onContinue(resized, 1f, Offset.Zero)
     }
   }
 
-  // Decoding, the zoom gesture and the encode stay here; the whole visible
-  // layout is drawn by the stateless ResizeScreenContent below, which is what
-  // the @Preview functions render.
   // Back closes the explanation before it leaves the screen. The explanation is
   // one of the things the holder owns, so closing it on the way out is also what
   // keeps it closed when the step is walked back into.
@@ -274,34 +271,41 @@ internal fun ResizeScreen(
 
   Box(modifier = Modifier.fillMaxSize()) {
     ResizeScreenContent(
-      preview = displayedPreview?.asImageBitmap(),
-      // What the preview is going to measure, which is the file the resize button promises -
-      // not the file that came in. The crop is a different shape, and the sliders and buttons
-      // are placed off the frame, so laying the screen out for the photo that came in would
-      // put them under a picture that is not the one on screen.
-      expectedSize = calculateResultingDim(resolution, targetSize, crop),
+      // The whole photograph, not the crop: this preview is the editor, and the window
+      // drawn over it is what the export will keep.
+      preview = preview?.asImageBitmap(),
       resolution = currentResolution,
       targetSize = targetSize,
       crop = crop,
+      cropZoom = state.cropZoom,
+      cropPan = state.cropPan,
       working = working,
-      zoomScale = zoom.scale,
-      zoomOffset = zoom.offset,
-      onTransform = { zoomChange, panChange ->
-        zoom.scale = (zoom.scale * zoomChange).coerceIn(0.5f, 5f)
-        zoom.offset += panChange
+      onCropTransform = { zoom, pan ->
+        state.cropZoom = zoom
+        state.cropPan = clampedCropPan(pan, sourceAspect, cropAspect, zoom)
       },
       onTargetSizeChange = { state.targetSize = it },
-      onCropChange = { state.crop = it },
+      onCropChange = { chosen ->
+        // Only a real change starts the window over: tapping the frame that is already
+        // selected must not throw away the crop that was just aimed.
+        if (state.crop != chosen) {
+          state.crop = chosen
+          state.resetCropView()
+        }
+      },
       onBack = onBack,
       onInfo = { state.showInfo = true },
-      onSkip = { onContinue(bytes, zoom.scale, zoom.offset) },
+      // Skip hands the original on, so the crop just aimed does not describe the file
+      // that leaves: the framing after this step starts fitted rather than at whatever
+      // the editor was left holding.
+      onSkip = { onContinue(bytes, 1f, Offset.Zero) },
       onResize = {
-        if (keepsSource(resolution, targetSize, crop)) {
+        if (keepsSource(resolution, targetSize, cropRect)) {
           // The button promised to keep the file: pass the original bytes on
           // rather than re-encoding an identical frame.
-          onContinue(bytes, zoom.scale, zoom.offset)
+          onContinue(bytes, 1f, Offset.Zero)
         } else {
-          resize(targetSize, crop.aspect)
+          resize(targetSize, cropRect)
         }
       },
     )
@@ -316,29 +320,21 @@ internal fun ResizeScreen(
 }
 
 /**
- * Stateless body of [ResizeScreen]: the zoomable preview of the decoded JPEG
- * with the size / crop controls beneath it. Decoding, cropping and encoding
- * live in [ResizeScreen], so this part can be rendered - and previewed - on
- * its own.
+ * Stateless body of [ResizeScreen]: the crop editor over the decoded JPEG, with the size and
+ * crop controls beneath it. Decoding, cropping and encoding live in [ResizeScreen], so this
+ * part can be rendered - and previewed - on its own.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun ResizeScreenContent(
   preview: ImageBitmap?,
-  /**
-   * What the preview is going to measure - the crop and scale this screen is promising, not
-   * the file that came in - for the frames before [preview] has been derived. The furniture is
-   * placed off the frame, so this is what keeps it still while the master decode and the
-   * resample happen.
-   */
-  expectedSize: Pair<Int, Int>? = null,
   resolution: Pair<Int, Int>?,
   targetSize: Int,
   crop: CropMode,
+  cropZoom: Float,
+  cropPan: Offset,
   working: Boolean,
-  zoomScale: Float,
-  zoomOffset: Offset,
-  onTransform: (zoomChange: Float, panChange: Offset) -> Unit,
+  onCropTransform: (zoom: Float, pan: Offset) -> Unit,
   onTargetSizeChange: (Int) -> Unit,
   onCropChange: (CropMode) -> Unit,
   onBack: () -> Unit,
@@ -347,45 +343,35 @@ internal fun ResizeScreenContent(
   onResize: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
-  val state = rememberTransformableState { zoomChange, offsetChange, _ ->
-    onTransform(zoomChange, offsetChange)
-  }
+  // The window, the size it exports at and whether the file survives untouched are all
+  // asked here once and handed to whichever arrangement is drawn, so the picture and the
+  // button cannot disagree about what is about to happen.
+  val cropAspect = cropAspectFor(crop, resolution)
+  val sourceAspect = resolution?.let { it.first.toFloat() / it.second.toFloat() } ?: 1f
+  val cropRect = cropWindow(sourceAspect, cropAspect, cropZoom, cropPan)
+  val resultingDim = calculateResultingDim(resolution, targetSize, cropRect)
+  val keeping = keepsSource(resolution, targetSize, cropRect)
 
   PreviewWithControls(
     modifier = modifier,
     preview = { previewModifier ->
-      // The pane is the shared MediaPreview: it owns the one way this app draws a
-      // photo, this screen's zoom on it, and the spinner until the decode lands.
-      // Anything below is furniture this screen puts *over* that photo, and it is
-      // laid out in the trailing lambda because MediaPreview hands back a
-      // BoxWithConstraintsScope - this screen's furniture is measured against the
-      // frame the pane settled on rather than against the bitmap or a 9:16 frame of
-      // its own imagining, so it needs the pane's own constraints.
-      MediaPreview(
+      // The pane is the crop editor: the photograph with the export's window drawn over
+      // it, and everything the window leaves out dimmed. It is laid out in the trailing
+      // lambda because the editor hands back a BoxWithConstraintsScope - this screen's
+      // furniture is measured against the frame the pane settled on rather than against the
+      // bitmap or a 9:16 frame of its own imagining, so it needs the pane's own constraints.
+      CropPreview(
         bitmap = preview,
-        contentDescription = stringResource(R.string.resize_source_desc),
+        sourceSize = resolution,
+        cropAspect = cropAspect,
+        zoom = cropZoom,
+        pan = cropPan,
+        onTransform = onCropTransform,
+        enabled = !working,
+        description = stringResource(R.string.resize_source_desc),
         modifier = previewModifier,
-        zoomScale = zoomScale,
-        zoomOffset = zoomOffset,
-        // The pinch has always been taken by the photo itself here, never by the
-        // whole screen, so the title bar and the sliders keep their own drags.
-        gesture = Modifier.transformable(state = state),
-        // The one screen whose preview is filtered as it is drawn. Everywhere
-        // else the decode is capped to roughly the size it is shown at, so
-        // nearest-neighbour sampling keeps the block edges of a glitch exact.
-        // Here the preview is by definition a *different* size from the one on
-        // screen - it is the export's size - and measured at 1272 px it is
-        // drawn at 0.85x and at 568 px at 1.9x, so the GPU is always
-        // resampling it. Medium, not Low: it adds mipmapping, which is what
-        // stops a minified bitmap from turning its own fine texture into a
-        // moire. Filtering without mipmaps (Low) did not; a regular grid with
-        // a 0.94 autocorrelation was still measured on screen at large
-        // targets, while the same pixels in the file show no such structure at
-        // all (residual 1.2 levels, best correlation 0.24).
-        filterQuality = FilterQuality.Medium,
-        expectedSize = expectedSize,
-        // Shown while there is no bitmap yet: the same spinner, centred in the
-        // pane, that this screen drew for itself before.
+        // Shown while there is no bitmap yet: the same spinner, centred in the pane, that
+        // this screen drew for itself before.
         placeholder = {
           Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             CircularProgressIndicator()
@@ -400,8 +386,8 @@ internal fun ResizeScreenContent(
           )
         }
 
-        // A photo that leaves the bottom of the screen room for them gets the controls
-        // there: the picture is centred in what is left above that room (the frame moved it
+        // A frame that leaves the bottom of the screen room for them gets the controls
+        // there: the window is centred in what is left above that room (the frame moved it
         // down to [PreviewFrame.top]) and the slider, the crop buttons and the two action
         // buttons are stacked in the bottom portion. This is the arrangement a landscape
         // photo lands in, and the one it needed: before it, the panel rode the picture's own
@@ -419,6 +405,7 @@ internal fun ResizeScreenContent(
               resolution = resolution,
               targetSize = targetSize,
               crop = crop,
+              enabled = !working,
               onTargetSizeChange = onTargetSizeChange,
               onCropChange = onCropChange,
               modifier = Modifier.padding(horizontal = 24.dp)
@@ -427,19 +414,16 @@ internal fun ResizeScreenContent(
               working = working,
               onSkip = onSkip,
               onResize = onResize,
-              resultingDim = calculateResultingDim(resolution, targetSize, crop),
-              keeping = keepsSource(resolution, targetSize, crop),
+              resultingDim = resultingDim,
+              keeping = keeping,
               modifier = Modifier.padding(horizontal = 24.dp)
             )
           }
         } else if (frame.hasRoomBelow) {
           // Otherwise the photo owns the window and the controls ride it, off the frame the
-          // pane measured rather than anything worked out here. What this screen did until
-          // now was measure the photo for itself as `maxWidth / STORIES_ASPECT`, which is
-          // this photo's height only while the crop is on: with the crop off, the sliders
-          // were laid out under a 9:16 photo that was not there and the buttons were given
-          // the difference between the pane and that imaginary frame - a negative number of
-          // pixels on a landscape photo. The frame is the one answer to all of that.
+          // pane measured rather than anything worked out here. The frame is the one answer
+          // to where the photo's edges are, how much room is under it, and whether the
+          // buttons can go below it at all - and the crop window is drawn inside it.
           Box(
             modifier = Modifier.fillMaxWidth().height(frame.photoHeight),
             contentAlignment = Alignment.BottomCenter
@@ -448,13 +432,13 @@ internal fun ResizeScreenContent(
                resolution = resolution,
                targetSize = targetSize,
                crop = crop,
+               enabled = !working,
                onTargetSizeChange = onTargetSizeChange,
                onCropChange = onCropChange,
                modifier = Modifier.padding(horizontal = 24.dp).padding(bottom = 12.dp)
              )
           }
 
-          val resultingDim = calculateResultingDim(resolution, targetSize, crop)
           Box(
             modifier = Modifier
               .fillMaxWidth()
@@ -467,7 +451,7 @@ internal fun ResizeScreenContent(
               onSkip = onSkip,
               onResize = onResize,
               resultingDim = resultingDim,
-              keeping = keepsSource(resolution, targetSize, crop),
+              keeping = keeping,
               modifier = Modifier.padding(horizontal = 24.dp)
             )
           }
@@ -476,9 +460,9 @@ internal fun ResizeScreenContent(
     },
     overlay = {
       BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-        // The pane's own frame asked again outside it, off the same bitmap and the same
-        // arithmetic: this slot sits below the pane and never sees what the pane settled on.
-        val pane = previewFrame(preview, maxWidth, maxHeight, expectedSize)
+        // The pane's own frame asked again outside it, off the same numbers: this slot
+        // sits below the pane and never sees what the pane settled on.
+        val pane = cropPreviewFrame(resolution, maxWidth, maxHeight)
 
         // Short window, or a photo that fills the pane: keep the sliders at the bottom edge.
         if (!pane.hasRoomBelow) {
@@ -486,6 +470,7 @@ internal fun ResizeScreenContent(
             resolution = resolution,
             targetSize = targetSize,
             crop = crop,
+            enabled = !working,
             onTargetSizeChange = onTargetSizeChange,
             onCropChange = onCropChange,
             modifier = Modifier
@@ -497,17 +482,16 @@ internal fun ResizeScreenContent(
     },
     controls = {
       BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-        val pane = previewFrame(preview, maxWidth, maxHeight, expectedSize)
+        val pane = cropPreviewFrame(resolution, maxWidth, maxHeight)
 
         // Short window, or a photo that fills the pane: keep the buttons in their own row.
         if (!pane.hasRoomBelow) {
-          val resultingDim = calculateResultingDim(resolution, targetSize, crop)
           ResizeControls(
             working = working,
             onSkip = onSkip,
             onResize = onResize,
             resultingDim = resultingDim,
-            keeping = keepsSource(resolution, targetSize, crop),
+            keeping = keeping,
             modifier = Modifier
               .navigationBarsPadding()
               .padding(horizontal = 24.dp)
@@ -525,6 +509,7 @@ private fun ResizeOverlayContent(
   resolution: Pair<Int, Int>?,
   targetSize: Int,
   crop: CropMode,
+  enabled: Boolean,
   onTargetSizeChange: (Int) -> Unit,
   onCropChange: (CropMode) -> Unit,
   modifier: Modifier = Modifier,
@@ -547,6 +532,7 @@ private fun ResizeOverlayContent(
     )
     Slider(
       value = targetSize.toFloat(),
+      enabled = enabled,
       onValueChange = { v ->
         onTargetSizeChange(allowedSizes.minByOrNull { abs(it - v.roundToInt()) } ?: targetSize)
       },
@@ -610,7 +596,7 @@ private fun ResizeOverlayContent(
     // nothing there.
     if (res != null) {
       Spacer(Modifier.height(16.dp))
-      CropModeRow(current = crop, onCropChange = onCropChange)
+      CropModeRow(current = crop, enabled = enabled, onCropChange = onCropChange)
     }
   }
 }
@@ -629,6 +615,7 @@ private fun ResizeOverlayContent(
 @Composable
 private fun CropModeRow(
   current: CropMode,
+  enabled: Boolean = true,
   onCropChange: (CropMode) -> Unit,
   modifier: Modifier = Modifier,
 ) {
@@ -640,6 +627,7 @@ private fun CropModeRow(
       val chosen = mode == current
       Button(
         onClick = { onCropChange(mode) },
+        enabled = enabled,
         modifier = Modifier
           .weight(1f)
           .height(44.dp)
@@ -731,18 +719,16 @@ private fun ResizeControls(
 private fun calculateResultingDim(
   res: Pair<Int, Int>?,
   targetSize: Int,
-  crop: CropMode,
+  crop: NormalizedCrop,
 ): Pair<Int, Int>? {
   if (res == null) return null
-  val (w, h) = res
-  val sourceAspect = w.toFloat() / h.toFloat()
-  val aspect = crop.aspect ?: sourceAspect
-  // Too wide for the chosen frame: the sides go. Otherwise the frame is cut from the
-  // top and bottom, so the width the export starts from is the full width.
-  val croppedW = if (sourceAspect > aspect) (h * aspect).roundToInt() else w
-  val finalW = min(croppedW, targetSize)
-  val finalH = (finalW / aspect).roundToInt()
-  return finalW to finalH
+  // The window's own pixel size, then the width cap: the height follows the window's
+  // aspect rather than one worked out again, so the button's numbers are the export's.
+  val (cropWidth, cropHeight) = cropPixelSize(res, crop)
+  val finalWidth = min(cropWidth, targetSize)
+  val finalHeight = (finalWidth.toFloat() * cropHeight / cropWidth).roundToInt()
+    .coerceAtLeast(1)
+  return finalWidth to finalHeight
 }
 
 // --- Previews ---------------------------------------------------------------
@@ -752,6 +738,8 @@ private fun ResizeScreenPreviewShell(
   working: Boolean = false,
   targetSize: Int = 1080,
   crop: CropMode = CropMode.Stories,
+  cropZoom: Float = 1f,
+  cropPan: Offset = Offset.Zero,
 ) {
   GlitchTheme {
     Surface(modifier = Modifier.fillMaxSize()) {
@@ -760,10 +748,10 @@ private fun ResizeScreenPreviewShell(
         resolution = 4032 to 3024,
         targetSize = targetSize,
         crop = crop,
+        cropZoom = cropZoom,
+        cropPan = cropPan,
         working = working,
-        zoomScale = 1f,
-        zoomOffset = Offset.Zero,
-        onTransform = { _, _ -> },
+        onCropTransform = { _, _ -> },
         onTargetSizeChange = {},
         onCropChange = {},
         onBack = {},

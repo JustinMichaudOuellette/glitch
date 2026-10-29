@@ -1423,12 +1423,18 @@ done:
 
 /*
  * The reference pipeline in one call: decode, turn the picture the right way up,
- * optionally centre-crop to an aspect, Lanczos-resize to a width, and re-encode.
+ * optionally crop it, Lanczos-resize to a width, and re-encode.
  *
  * One call rather than three, because the intermediate pixels are the expensive
  * part - a 12 MP photo is 48 MB of RGB and there is no reason for it to cross
- * the JNI boundary or land in the Java heap. crop_aspect <= 0 means no crop, and
- * a target width at or above the source leaves the size alone.
+ * the JNI boundary or land in the Java heap.
+ *
+ * The crop is either a centred window of one aspect (crop_aspect > 0, the older
+ * callers and the parity tests) or an exact rectangle given as proportions of the
+ * upright picture (crop_width and crop_height > 0, which wins). Proportions rather
+ * than pixels because the caller measures its window on the *preview* decode, which
+ * is not the size of the file, and both decodes have the same shape. A target width
+ * at or above the source leaves the size alone.
  *
  * `orientation` is the EXIF orientation of the input (1 = normal, the values
  * `ExifInterface.ORIENTATION_*` uses). It is applied here, before the crop, for
@@ -1442,7 +1448,9 @@ JNIEXPORT jbyteArray JNICALL
 Java_ca_justinmo_glitch_jpeg_JpegNative_resizeJpeg(JNIEnv *env, jobject thiz,
                                                    jbyteArray jpeg_bytes, jint target_width,
                                                    jint quality, jint subsampling,
-                                                   jfloat crop_aspect, jint orientation) {
+                                                   jfloat crop_aspect, jfloat crop_left,
+                                                   jfloat crop_top, jfloat crop_width,
+                                                   jfloat crop_height, jint orientation) {
   jbyteArray result = NULL;
   jpeg_error_ctx ctx;
   scratch s;
@@ -1471,20 +1479,48 @@ Java_ca_justinmo_glitch_jpeg_JpegNative_resizeJpeg(JNIEnv *env, jobject thiz,
         source_h = s.upright_height;
       }
 
-      if (crop_aspect > 0.0f) {
+      {
+        int left = 0;
+        int top = 0;
         int cw = source_w;
         int ch = source_h;
-        const double current = (double)source_w / (double)source_h;
-        if (current > (double)crop_aspect) {
-          cw = (int)((double)source_h * (double)crop_aspect + 0.5);
-        } else {
-          ch = (int)((double)source_w / (double)crop_aspect + 0.5);
+        if (crop_width > 0.0f && crop_height > 0.0f) {
+          /* The exact rectangle: proportions of the upright picture, clamped in. */
+          double l = (double)crop_left;
+          double t = (double)crop_top;
+          double w = (double)crop_width;
+          double h = (double)crop_height;
+          if (l < 0.0) l = 0.0;
+          if (l > 1.0) l = 1.0;
+          if (t < 0.0) t = 0.0;
+          if (t > 1.0) t = 1.0;
+          if (w < 0.0) w = 0.0;
+          if (w > 1.0) w = 1.0;
+          if (h < 0.0) h = 0.0;
+          if (h > 1.0) h = 1.0;
+          left = (int)(l * (double)source_w + 0.5);
+          top = (int)(t * (double)source_h + 0.5);
+          cw = (int)(w * (double)source_w + 0.5);
+          ch = (int)(h * (double)source_h + 0.5);
+          if (left >= source_w) left = source_w - 1;
+          if (top >= source_h) top = source_h - 1;
+          if (cw > source_w - left) cw = source_w - left;
+          if (ch > source_h - top) ch = source_h - top;
+          if (cw < 1) cw = 1;
+          if (ch < 1) ch = 1;
+        } else if (crop_aspect > 0.0f) {
+          const double current = (double)source_w / (double)source_h;
+          if (current > (double)crop_aspect) {
+            cw = (int)((double)source_h * (double)crop_aspect + 0.5);
+          } else {
+            ch = (int)((double)source_w / (double)crop_aspect + 0.5);
+          }
+          if (cw < 1) cw = 1;
+          if (ch < 1) ch = 1;
+          left = (source_w - cw) / 2;
+          top = (source_h - ch) / 2;
         }
-        if (cw < 1) cw = 1;
-        if (ch < 1) ch = 1;
         if (cw < source_w || ch < source_h) {
-          const int left = (source_w - cw) / 2;
-          const int top = (source_h - ch) / 2;
           s.cropped = (unsigned char *)malloc((size_t)cw * (size_t)ch * 3);
           if (s.cropped == NULL) goto done;
           for (int y = 0; y < ch; y++) {

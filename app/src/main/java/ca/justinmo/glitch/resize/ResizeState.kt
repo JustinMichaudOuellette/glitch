@@ -1,8 +1,10 @@
 package ca.justinmo.glitch.resize
 
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.geometry.Offset
 import ca.justinmo.glitch.STORIES_ASPECT
 
 /**
@@ -50,12 +52,46 @@ internal class ResizeState {
    */
   var crop by mutableStateOf<CropMode?>(null)
 
+  /**
+   * How far the crop editor is pulled in, relative to the biggest window of the chosen
+   * shape that fits: 1 is that whole window, [ca.justinmo.glitch.MAX_CROP_ZOOM] the
+   * tightest crop the editor offers.
+   *
+   * A number rather than a rectangle because it is what a pinch changes, and because it
+   * means the same thing on every pane: the window is worked out from it and [cropPan]
+   * where it is drawn and where it is exported, so neither has to remember the other.
+   */
+  var cropZoom by mutableFloatStateOf(1f)
+
+  /**
+   * How far the picture has been dragged under the window, as a proportion of its own
+   * drawn width and height. Positive moves the picture right and down.
+   */
+  var cropPan by mutableStateOf(Offset.Zero)
+
   /** Whether the explanation is up. */
   var showInfo by mutableStateOf(false)
+
+  /** Centre the window again, at the biggest size the frame allows. */
+  fun resetCropView() {
+    cropZoom = 1f
+    cropPan = Offset.Zero
+  }
+
+  /**
+   * A different picture has been picked, so what was chosen about the last one does not
+   * describe it: the frame goes back to the photo-dependent default and the window to the
+   * middle. [targetSize] stays - it is how this user exports rather than what this file is.
+   */
+  fun resetCropForNewPicture() {
+    crop = null
+    resetCropView()
+  }
 
   /** The picture underneath changed: back to the screen's own defaults. */
   fun clear() {
     targetSize = null
     crop = null
+    resetCropView()
   }
 }

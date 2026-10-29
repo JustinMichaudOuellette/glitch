@@ -1,6 +1,7 @@
 package ca.justinmo.glitch.jpeg
 
 import android.graphics.Bitmap
+import ca.justinmo.glitch.NormalizedCrop
 
 /**
  * The app's own JPEG decoder and encoder, over libjpeg-turbo built into the app.
@@ -84,13 +85,17 @@ internal object JpegNative {
 
   /**
    * The reference pipeline in one call: decode, turn the picture upright, optionally
-   * centre-crop to [cropAspect], Lanczos-resize to [targetWidth] and re-encode.
+   * crop it, Lanczos-resize to [targetWidth] and re-encode.
    *
    * One call because the intermediate pixels are the expensive part: a 12 MP
    * photo is 48 MB of RGB, and there is no reason for it to cross into the Java
-   * heap on its way from the decoder to the encoder. [cropAspect] at or below
-   * zero means no crop; a [targetWidth] at or above the source leaves the size
-   * alone.
+   * heap on its way from the decoder to the encoder.
+   *
+   * The crop is either centre-only, by [cropAspect], or an exact rectangle in
+   * [cropLeft], [cropTop], [cropWidth] and [cropHeight] - proportions of the upright
+   * picture. The rectangle wins when it has a width and a height; a [cropAspect] at or
+   * below zero means no crop, and a [targetWidth] at or above the source leaves the
+   * size alone.
    *
    * [orientation] is the EXIF orientation of [jpeg] - the numbers
    * `ExifInterface.ORIENTATION_*` uses, 1 meaning "already upright". libjpeg does
@@ -98,7 +103,7 @@ internal object JpegNative {
    * so the rotation has to happen in here: a camera photo whose stored grid is
    * sideways would otherwise be handed on sideways with nothing left to say so.
    * It is applied before the crop and the scale, which are both measured on the
-   * upright picture.
+   * upright picture - so the rectangle is too.
    */
   external fun resizeJpeg(
     jpeg: ByteArray,
@@ -106,6 +111,10 @@ internal object JpegNative {
     quality: Int,
     subsampling: Int,
     cropAspect: Float,
+    cropLeft: Float,
+    cropTop: Float,
+    cropWidth: Float,
+    cropHeight: Float,
     orientation: Int,
   ): ByteArray?
 
@@ -213,6 +222,9 @@ internal object JpegNative {
    * Resize through the reference pipeline, falling back to null when the native
    * library is missing so the caller can use the platform path instead.
    *
+   * [crop] is the exact rectangle to keep; when it is null the old centre-only crop
+   * by [cropAspect] is used, which is what the parity tests were written against.
+   *
    * [orientation] is the input's EXIF orientation, as [resizeJpeg] takes it. The
    * default is 1 - "the stored grid is already the picture" - so a caller with no
    * tag to report gets the pipeline it always got, byte for byte.
@@ -221,6 +233,7 @@ internal object JpegNative {
     jpeg: ByteArray,
     targetWidth: Int,
     cropAspect: Float? = null,
+    crop: NormalizedCrop? = null,
     orientation: Int = 1,
   ): ByteArray? {
     if (!isAvailable) return null
@@ -230,6 +243,10 @@ internal object JpegNative {
       quality = REFERENCE_QUALITY,
       subsampling = SUBSAMPLING_420,
       cropAspect = cropAspect ?: 0f,
+      cropLeft = crop?.left ?: 0f,
+      cropTop = crop?.top ?: 0f,
+      cropWidth = crop?.width ?: 0f,
+      cropHeight = crop?.height ?: 0f,
       orientation = orientation,
     )
   }

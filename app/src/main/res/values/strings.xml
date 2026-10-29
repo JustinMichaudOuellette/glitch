@@ -169,7 +169,7 @@
     <string name="resize_info_speed_default">1736 x 2312 px ↦ 62 713 squares</string>
     <string name="resize_info_speed_small">1080 x 1920 px ↦ 32 400 squares</string>
     <string name="resize_info_controls_title">What the controls do</string>
-    <string name="resize_info_controls_body">The slider picks the width of the resized photo you will be working with. The crop buttons pick the frame it is exported in: No crop keeps the whole picture, 1:1 trims it to a square, and 9:16 is the frame stories take.</string>
+    <string name="resize_info_controls_body">The slider picks the width of the resized photo you will be working with. The crop buttons pick the frame it is exported in: No crop keeps the picture\'s own shape, 1:1 trims it to a square, and 9:16 is the frame stories take. Drag the picture to move the crop and pinch to zoom it; whatever is outside the bright frame is left out.</string>
 
     <!-- Screen 4: glitch editor -->
     <string name="edit_undo">Undo</string>
